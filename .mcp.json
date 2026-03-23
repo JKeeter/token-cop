@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "token-cop": {
+      "type": "stdio",
+      "command": "/Users/jkeeter/projects/token-cop/.venv/bin/python3",
+      "args": [
+        "/Users/jkeeter/projects/token-cop/mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}

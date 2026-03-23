@@ -1,0 +1,3 @@
+.bedrock_agentcore.yaml filter=aws-account
+mcp_server.py filter=aws-account
+scripts/setup_policies.py filter=aws-account

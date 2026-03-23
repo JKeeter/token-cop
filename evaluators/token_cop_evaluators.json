@@ -1,0 +1,62 @@
+{
+  "evaluators": [
+    {
+      "name": "token_cop_data_completeness",
+      "level": "TRACE",
+      "description": "Checks that Token Cop responses contain actual numerical usage data (token counts, costs) rather than just confirmations or empty responses.",
+      "config": {
+        "llmAsAJudge": {
+          "instructions": "You are evaluating a Token Cop agent that tracks LLM token usage.\n\nGiven the conversation context and the assistant's response, evaluate whether the response contains actual numerical usage data that answers the user's question.\n\n<context>{context}</context>\n<assistant_turn>{assistant_turn}</assistant_turn>\n\nA good response includes specific numbers like token counts (e.g. '1,234,567 tokens'), dollar amounts (e.g. '$12.34'), percentages, request counts, or model breakdowns in table format.\n\nA poor response contains only confirmations like 'Snapshot saved', 'Your data has been stored', 'Done', or is completely empty. Also poor: generic follow-up questions without data, or responses that describe actions without showing actual numbers.",
+          "ratingScale": {
+            "numerical": [
+              {
+                "value": 0.0,
+                "label": "No data",
+                "definition": "Response contains no numerical data, is empty, just a save/store confirmation, or only asks a follow-up question without presenting data"
+              },
+              {
+                "value": 1.0,
+                "label": "Has data",
+                "definition": "Response contains specific numerical data directly answering the user's question including token counts, costs, or usage tables"
+              }
+            ]
+          },
+          "modelConfig": {
+            "bedrockEvaluatorModelConfig": {
+              "modelId": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "token_cop_cost_formatting",
+      "level": "TRACE",
+      "description": "Validates that cost figures in Token Cop responses follow USD formatting conventions ($X.XX) and are labeled as estimated.",
+      "config": {
+        "llmAsAJudge": {
+          "instructions": "You are evaluating a Token Cop agent that reports LLM usage costs.\n\nGiven the conversation context and the assistant's response, evaluate whether cost and spend figures follow proper formatting conventions.\n\n<context>{context}</context>\n<assistant_turn>{assistant_turn}</assistant_turn>\n\nCheck these criteria:\n1. Costs should be prefixed with '$' (e.g. '$12.34', not '12.34 dollars')\n2. Costs should show 2 decimal places (e.g. '$12.34', not '$12.3' or '$12')\n3. Large token numbers should use commas (e.g. '1,234,567', not '1234567')\n4. Costs should be labeled as 'estimated' since they are based on published pricing\n\nIf the response contains no cost data because the user didn't ask about costs, or because the response is empty, score based on whether cost data was expected given the user's question.",
+          "ratingScale": {
+            "numerical": [
+              {
+                "value": 0.0,
+                "label": "Bad formatting",
+                "definition": "No costs shown when expected, costs in wrong format, or missing dollar signs and decimals"
+              },
+              {
+                "value": 1.0,
+                "label": "Good formatting",
+                "definition": "All costs formatted as $X.XX with commas in large numbers, labeled as estimated"
+              }
+            ]
+          },
+          "modelConfig": {
+            "bedrockEvaluatorModelConfig": {
+              "modelId": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
