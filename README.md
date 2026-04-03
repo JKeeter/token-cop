@@ -4,14 +4,26 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 
 ## Features
 
+### Usage Tracking
 - **Multi-provider tracking** - Bedrock (CloudWatch), OpenRouter (REST API), OpenAI (Admin API)
 - **Cost estimation** - Per-model pricing lookup with automatic model name normalization
 - **Budget tracking** - Burn rate calculations and monthly projections
 - **Usage snapshots** - Persist and semantically search past usage via AgentCore Memory
 - **Cross-provider aggregation** - Unified view across all providers
+
+### Smart Token Management (v2)
+- **Heavy file ingestion** - Auto-converts PDF, DOCX, PPTX, XLSX to markdown/CSV before Claude reads them (10-100x token savings)
+- **Smart model router** - Classifies tasks into reasoning/execution/polish tiers and recommends the most cost-effective model
+- **Token audit** - Scores usage across 6 dimensions (document ingestion, model mix, cache utilization, cost concentration, efficiency trend, savings opportunities) with A-F grades
+- **Context audit** - Inspects Claude Code environment for bloat: CLAUDE.md weight, MCP servers, skill/plugin tax, pruning recommendations
+- **Team dashboard** - Streamlit app with org-wide spend overview, per-model efficiency analysis, and optimization recommendations
+- **Weekly reports** - Markdown/JSON reports for Slack/email with efficiency grades and top recommendations
+
+### Infrastructure
 - **MCP Gateway** - HTTPS endpoint with Cognito JWT authentication
 - **Cedar policies** - Access control via AgentCore Policy Engine
 - **Observability** - OTEL tracing with AgentCore evaluations
+- **Claude Code hooks** - PreToolUse hook intercepts binary file reads
 
 ## Architecture
 
@@ -99,6 +111,9 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 | `check_budget` | Burn rate calculation and monthly projection |
 | `save_snapshot` | Persist current usage to AgentCore Memory |
 | `search_history` | Semantic search over past usage snapshots |
+| `recommend_model` | Classify a task and recommend the best model tier |
+| `token_audit` | Score usage efficiency across 6 dimensions (A-F grade) |
+| `context_audit` | Inspect Claude Code environment for context bloat (local only) |
 
 ## Project Structure
 
@@ -106,7 +121,7 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 token-cop/
 ├── agent/
 │   ├── app.py              # AgentCore entrypoint (BedrockAgentCoreApp)
-│   ├── agent.py            # Strands Agent with system prompt
+│   ├── agent.py            # Strands Agent with system prompt + efficiency advisor
 │   ├── config.py           # Configuration loading
 │   ├── guardrails.py       # Output scrubbing for API keys/secrets
 │   └── tracing.py          # OTEL tracing + ADOT configurator
@@ -116,29 +131,121 @@ token-cop/
 │   ├── openai_usage.py     # OpenAI Admin API
 │   ├── aggregate.py        # Cross-provider rollup
 │   ├── budget.py           # Burn rate + projection
-│   └── memory_tools.py     # save_snapshot + search_history
+│   ├── memory_tools.py     # save_snapshot + search_history
+│   ├── model_router.py     # Smart model tier recommendations
+│   ├── audit.py            # Token efficiency audit (6 dimensions)
+│   └── context_audit.py    # Claude Code environment bloat detection
 ├── models/
 │   ├── schemas.py          # TokenUsageRecord dataclass
 │   ├── pricing.py          # Per-model cost lookup table
-│   └── normalization.py    # Model name aliases
+│   ├── normalization.py    # Model name aliases
+│   └── model_tiers.py      # Reasoning/execution/polish tier definitions
+├── dashboard/
+│   ├── app.py              # Streamlit dashboard entry point
+│   ├── auth.py             # Password auth (Cognito-upgradeable)
+│   ├── data.py             # Data aggregation layer
+│   └── views/
+│       ├── overview.py     # Team spend, grade, model mix charts
+│       ├── per_user.py     # Per-model efficiency analysis
+│       └── recommendations.py  # Prioritized optimization advice
 ├── memory/
 │   └── store.py            # AgentCore Memory helpers
 ├── scripts/
 │   ├── local_test.py       # Local REPL for testing
-│   ├── setup_policies.py   # Cedar policy demos
-│   ├── eval_demo.py        # Interactive evaluation demo
-│   └── eval_regression.py  # CI regression suite
+│   ├── convert_heavy_file.py  # Document → markdown/CSV converter
+│   ├── check_heavy_file.py    # Claude Code hook helper
+│   ├── generate_report.py     # Weekly efficiency report generator
+│   ├── setup_policies.py      # Cedar policy demos
+│   ├── eval_demo.py           # Interactive evaluation demo
+│   └── eval_regression.py     # CI regression suite
+├── skills/
+│   ├── heavy-file-ingestion/SKILL.md  # Document conversion skill
+│   └── token-audit/SKILL.md           # /tokcop-audit skill
 ├── evaluators/
 │   └── token_cop_evaluators.json
 ├── docs/
 │   ├── mcp-gateway.md      # MCP Gateway architecture
 │   ├── policies.md         # Cedar policy documentation
 │   └── evaluations.md      # Evaluation framework docs
-├── mcp_server.py           # MCP server for Claude Code
+├── mcp_server.py           # MCP server for Claude Code (+ context audit)
+├── .claude/settings.json   # Hook: intercept binary file reads
 ├── Dockerfile              # Container build
 ├── requirements.txt        # Python dependencies
 └── .bedrock_agentcore.yaml # AgentCore deployment config
 ```
+
+## Smart Token Management
+
+*More tokens is FINE — they need to be SMART tokens.*
+
+### Document Conversion
+
+Convert binary documents to markdown/CSV before Claude reads them:
+
+```bash
+# Convert a single file
+python scripts/convert_heavy_file.py report.pdf
+
+# Specify output directory
+python scripts/convert_heavy_file.py deck.pptx --output-dir ./converted
+
+# Choose conversion strategy
+python scripts/convert_heavy_file.py data.xlsx --prefer native
+```
+
+Supported formats: PDF, DOCX, PPTX, XLSX. Output goes to `<filename>.converted/` with:
+- Converted artifacts (`.md` or `.csv`)
+- `index.json` — metadata, compression ratio, quality flags
+- `index.md` — human-readable summary with preview
+
+The Claude Code hook (`.claude/settings.json`) automatically intercepts binary file reads and prompts conversion.
+
+### Model Router
+
+Ask Token Cop which model tier fits your task:
+
+```
+/tokcop Should I use Opus or Sonnet to reformat this JSON?
+```
+
+Three tiers: **Reasoning** (Opus — architecture, debugging), **Execution** (Sonnet — code gen, data processing), **Polish** (Haiku — formatting, summarizing).
+
+### Token Audit
+
+Run a comprehensive efficiency audit:
+
+```
+/tokcop Run a token audit for the last 7 days
+```
+
+Scores 6 dimensions: document ingestion, model mix, cache utilization, cost concentration, efficiency trend, and top savings opportunity. Returns an A-F grade with prioritized recommendations.
+
+Schedule weekly audits in Claude Code: `/loop 1w /tokcop-audit`
+
+### Context Audit
+
+Inspect your Claude Code environment for bloat:
+
+```
+/tokcop-audit
+```
+
+Reports on CLAUDE.md weight, MCP server inventory, skill/plugin tax, and recommends pruning.
+
+### Team Dashboard
+
+```bash
+# Launch the dashboard
+streamlit run dashboard/app.py
+
+# Generate a weekly report for Slack/email
+python -m scripts.generate_report --period weekly --format markdown
+
+# Monthly JSON report
+python -m scripts.generate_report --period monthly --format json
+```
+
+The dashboard provides: org-wide spend overview, per-model efficiency analysis, and prioritized optimization recommendations. Set `TOKEN_COP_DASHBOARD_PASSWORD` env var for access control (default: `tokencop`).
 
 ## Local Development
 

@@ -10,7 +10,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
-- `agent/agent.py` - Strands Agent with system prompt and 7 tools
+- `agent/agent.py` - Strands Agent with system prompt, 10 tools, and efficiency advisor
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
 - `tools/` - One file per provider, each exports a @tool-decorated function
@@ -25,6 +25,21 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `save_snapshot` - Persist to AgentCore Memory
 - `search_history` - Semantic search over past snapshots
 - `check_budget` - Burn rate + projection
+- `recommend_model` - Classify task → reasoning/execution/polish tier recommendation
+- `token_audit` - Score usage efficiency across 6 dimensions (A-F grade)
+- `context_audit` - Inspect Claude Code environment for context bloat (local MCP tool)
+
+## Smart Token Management (v2)
+- `scripts/convert_heavy_file.py` - Converts PDF/DOCX/PPTX/XLSX → markdown/CSV (10-100x savings)
+- `scripts/check_heavy_file.py` - PreToolUse hook helper, blocks binary file reads
+- `.claude/settings.json` - Hook wiring for automatic binary file interception
+- `skills/heavy-file-ingestion/SKILL.md` - Document conversion skill
+- `skills/token-audit/SKILL.md` - `/tokcop-audit` skill (usage + context audit)
+- `models/model_tiers.py` - Reasoning/execution/polish tier definitions + task classifier
+- `dashboard/` - Streamlit team dashboard (overview, per-model, recommendations)
+- `scripts/generate_report.py` - Weekly markdown/JSON report for Slack/email
+- System prompt includes Token Efficiency Advisor (5 commandments)
+- Mantra: "More tokens is FINE — they need to be SMART tokens"
 
 ## Patterns
 - Tools return JSON strings (Strands convention)
