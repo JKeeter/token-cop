@@ -1,10 +1,13 @@
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 from strands import tool
 
 from agent.tracing import get_tracer
 from models.pricing import PRICING_PER_MILLION
+
+logger = logging.getLogger(__name__)
 
 
 @tool
@@ -27,6 +30,7 @@ def _token_audit_impl(days: int) -> str:
     from tools.openai_usage import openai_usage
     from tools.openrouter_usage import openrouter_usage
 
+    days = max(1, days)
     now = datetime.now(timezone.utc)
     end_date = now.strftime("%Y-%m-%d")
     start_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -101,8 +105,8 @@ def _token_audit_impl(days: int) -> str:
                 for rec in invocation_data.get("recommendations", []):
                     if rec not in recommendations:
                         recommendations.append(rec)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Invocation log analysis failed: %s", exc)
     else:
         recommendations.append(
             "Configure BEDROCK_LOG_BUCKET to enable request-level invocation log analysis"
@@ -150,7 +154,8 @@ def _gather_provider_data(start_date, end_date, bedrock_fn, openai_fn, openroute
             data = json.loads(text)
             if "error" not in data:
                 results.append(data)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Provider %s failed: %s", fn.__name__, exc)
             continue
     return results
 

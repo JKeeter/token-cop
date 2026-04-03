@@ -3,6 +3,7 @@
 import gzip
 import hashlib
 import json
+import logging
 import random
 import re
 from collections import Counter, defaultdict
@@ -11,6 +12,8 @@ from statistics import median
 
 import boto3
 from strands import tool
+
+logger = logging.getLogger(__name__)
 
 from agent.config import AWS_REGION, get_secret
 from agent.tracing import get_tracer
@@ -46,6 +49,8 @@ def analyze_invocation_logs(days: int = 7, sample_size: int = 300) -> str:
 
 
 def _analyze_impl(days: int, sample_size: int) -> str:
+    days = max(1, days)
+    sample_size = max(1, sample_size)
     bucket, prefix = _get_log_config()
     if not bucket:
         return json.dumps({
@@ -154,7 +159,8 @@ def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
                         })
                 if objects:
                     break  # Found objects with this prefix pattern
-            except Exception:
+            except Exception as exc:
+                logger.debug("S3 list failed for prefix %s: %s", pfx, exc)
                 continue
 
         # Also try with account ID embedded in path
@@ -172,8 +178,8 @@ def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
                                 "Size": obj.get("Size", 0),
                                 "date": day.strftime("%Y-%m-%d"),
                             })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("S3 account prefix discovery failed: %s", exc)
 
     return objects
 
@@ -224,7 +230,8 @@ def _parse_log_entries(s3, bucket: str, objects: list[dict]) -> list[InvocationL
                         entries.append(entry)
                 except json.JSONDecodeError:
                     continue
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to parse S3 object %s: %s", obj["Key"], exc)
             continue
 
     return entries

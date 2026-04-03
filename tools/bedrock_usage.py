@@ -124,22 +124,9 @@ def _bedrock_usage_impl(start_date: str, end_date: str, model_filter: str) -> st
 
 
 def _parse_date(date_str: str, end_of_day: bool = False) -> datetime:
-    """Parse a date string, handling multiple formats the LLM might use."""
-    from dateutil import parser as dateutil_parser
-
-    date_str = date_str.strip()
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        try:
-            dt = dateutil_parser.parse(date_str).replace(tzinfo=timezone.utc)
-        except (ValueError, TypeError):
-            # Last resort: treat as relative like "30 days ago"
-            return datetime.now(timezone.utc) - timedelta(days=30)
-
-    if end_of_day:
-        dt = dt.replace(hour=23, minute=59, second=59)
-    return dt
+    """Parse a date string. Raises ValueError on failure."""
+    from utils.dates import parse_date
+    return parse_date(date_str, end_of_day=end_of_day)
 
 
 def _discover_bedrock_models(cw, start: datetime, end: datetime) -> list[str]:
@@ -165,90 +152,88 @@ def _discover_bedrock_models(cw, start: datetime, end: datetime) -> list[str]:
 def _get_model_metrics(
     cw, model_id: str, start: datetime, end: datetime
 ) -> tuple[int, int, int, int, int]:
-    """Get aggregated token counts and invocation count for a model."""
-    response = cw.get_metric_data(
-        MetricDataQueries=[
-            {
-                "Id": "input_tokens",
-                "MetricStat": {
-                    "Metric": {
-                        "Namespace": "AWS/Bedrock",
-                        "MetricName": "InputTokenCount",
-                        "Dimensions": [{"Name": "ModelId", "Value": model_id}],
-                    },
-                    "Period": 86400,  # 1 day
-                    "Stat": "Sum",
-                },
-            },
-            {
-                "Id": "output_tokens",
-                "MetricStat": {
-                    "Metric": {
-                        "Namespace": "AWS/Bedrock",
-                        "MetricName": "OutputTokenCount",
-                        "Dimensions": [{"Name": "ModelId", "Value": model_id}],
-                    },
-                    "Period": 86400,
-                    "Stat": "Sum",
-                },
-            },
-            {
-                "Id": "invocations",
-                "MetricStat": {
-                    "Metric": {
-                        "Namespace": "AWS/Bedrock",
-                        "MetricName": "Invocations",
-                        "Dimensions": [{"Name": "ModelId", "Value": model_id}],
-                    },
-                    "Period": 86400,
-                    "Stat": "Sum",
-                },
-            },
-            {
-                "Id": "cache_read_tokens",
-                "MetricStat": {
-                    "Metric": {
-                        "Namespace": "AWS/Bedrock",
-                        "MetricName": "CacheReadInputTokenCount",
-                        "Dimensions": [{"Name": "ModelId", "Value": model_id}],
-                    },
-                    "Period": 86400,
-                    "Stat": "Sum",
-                },
-            },
-            {
-                "Id": "cache_write_tokens",
-                "MetricStat": {
-                    "Metric": {
-                        "Namespace": "AWS/Bedrock",
-                        "MetricName": "CacheWriteInputTokenCount",
-                        "Dimensions": [{"Name": "ModelId", "Value": model_id}],
-                    },
-                    "Period": 86400,
-                    "Stat": "Sum",
-                },
-            },
-        ],
-        StartTime=start,
-        EndTime=end,
-    )
+    """Get aggregated token counts and invocation count for a model.
 
-    input_tokens = 0
-    output_tokens = 0
-    invocations = 0
-    cache_read = 0
-    cache_write = 0
-    for result in response["MetricDataResults"]:
-        total = int(sum(result["Values"]))
-        if result["Id"] == "input_tokens":
-            input_tokens = total
-        elif result["Id"] == "output_tokens":
-            output_tokens = total
-        elif result["Id"] == "invocations":
-            invocations = total
-        elif result["Id"] == "cache_read_tokens":
-            cache_read = total
-        elif result["Id"] == "cache_write_tokens":
-            cache_write = total
+    Handles CloudWatch pagination via NextToken to avoid silently
+    truncating results for long time ranges.
+    """
+    queries = [
+        {
+            "Id": "input_tokens",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Bedrock",
+                    "MetricName": "InputTokenCount",
+                    "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                },
+                "Period": 86400,  # 1 day
+                "Stat": "Sum",
+            },
+        },
+        {
+            "Id": "output_tokens",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Bedrock",
+                    "MetricName": "OutputTokenCount",
+                    "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                },
+                "Period": 86400,
+                "Stat": "Sum",
+            },
+        },
+        {
+            "Id": "invocations",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Bedrock",
+                    "MetricName": "Invocations",
+                    "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                },
+                "Period": 86400,
+                "Stat": "Sum",
+            },
+        },
+        {
+            "Id": "cache_read_tokens",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Bedrock",
+                    "MetricName": "CacheReadInputTokenCount",
+                    "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                },
+                "Period": 86400,
+                "Stat": "Sum",
+            },
+        },
+        {
+            "Id": "cache_write_tokens",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Bedrock",
+                    "MetricName": "CacheWriteInputTokenCount",
+                    "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                },
+                "Period": 86400,
+                "Stat": "Sum",
+            },
+        },
+    ]
 
-    return input_tokens, output_tokens, invocations, cache_read, cache_write
+    # Accumulate across all pages
+    totals = {"input_tokens": 0, "output_tokens": 0, "invocations": 0,
+              "cache_read_tokens": 0, "cache_write_tokens": 0}
+
+    kwargs = {"MetricDataQueries": queries, "StartTime": start, "EndTime": end}
+    while True:
+        response = cw.get_metric_data(**kwargs)
+        for result in response["MetricDataResults"]:
+            totals[result["Id"]] += int(sum(result["Values"]))
+
+        next_token = response.get("NextToken")
+        if not next_token:
+            break
+        kwargs["NextToken"] = next_token
+
+    return (totals["input_tokens"], totals["output_tokens"], totals["invocations"],
+            totals["cache_read_tokens"], totals["cache_write_tokens"])

@@ -3,9 +3,12 @@
 In production (AgentCore Runtime): loads secrets from SSM Parameter Store.
 In local dev: falls back to .env file.
 """
+import logging
 import os
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -55,7 +58,8 @@ def get_secret(env_var: str) -> str:
         # Also set in env so tools pick it up via os.environ
         os.environ[env_var] = value
         return value
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load %s from SSM (%s): %s", env_var, ssm_name, exc)
         return ""
 
 

@@ -16,9 +16,6 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("token-cop")
 
 REGION = "us-east-1"
-AGENT_ARN = "<replace with your AGENT ARN"
-GATEWAY_URL = "https://<REPLACE WITH GATEWAY URL"
-TOKEN_ENDPOINT = "REPLACE WITH TOKEN URL"
 COGNITO_SCOPE = "token-cop-gateway/invoke"
 
 BACKEND = os.environ.get("TOKEN_COP_BACKEND", "gateway")
@@ -27,12 +24,39 @@ BACKEND = os.environ.get("TOKEN_COP_BACKEND", "gateway")
 _token: str | None = None
 _token_expires_at: float = 0
 
+# SSM-loaded config cache
+_ssm_config: dict[str, str] = {}
+
+
+def _get_ssm_param(name: str) -> str:
+    """Load a parameter from SSM, caching the result."""
+    if name in _ssm_config:
+        return _ssm_config[name]
+    ssm = boto3.client("ssm", region_name=REGION)
+    value = ssm.get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
+    _ssm_config[name] = value
+    return value
+
+
+def _get_gateway_url() -> str:
+    """Load gateway URL from env or SSM."""
+    return os.environ.get("TOKEN_COP_GATEWAY_URL") or _get_ssm_param("/token-cop/gateway-url")
+
+
+def _get_token_endpoint() -> str:
+    """Load Cognito token endpoint from env or SSM."""
+    return os.environ.get("TOKEN_COP_TOKEN_ENDPOINT") or _get_ssm_param("/token-cop/gateway-token-endpoint")
+
+
+def _get_agent_arn() -> str:
+    """Load agent ARN from env or SSM."""
+    return os.environ.get("TOKEN_COP_AGENT_ARN") or _get_ssm_param("/token-cop/agent-arn")
+
 
 def _get_cognito_credentials() -> tuple[str, str]:
     """Load Cognito client credentials from SSM Parameter Store."""
-    ssm = boto3.client("ssm", region_name=REGION)
-    client_id = ssm.get_parameter(Name="/token-cop/gateway-client-id", WithDecryption=True)["Parameter"]["Value"]
-    client_secret = ssm.get_parameter(Name="/token-cop/gateway-client-secret", WithDecryption=True)["Parameter"]["Value"]
+    client_id = _get_ssm_param("/token-cop/gateway-client-id")
+    client_secret = _get_ssm_param("/token-cop/gateway-client-secret")
     return client_id, client_secret
 
 
@@ -54,7 +78,7 @@ def _get_access_token() -> str:
     }).encode()
 
     req = urllib.request.Request(
-        TOKEN_ENDPOINT,
+        _get_token_endpoint(),
         data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -81,7 +105,7 @@ def _call_via_gateway(prompt: str) -> str:
     }).encode()
 
     req = urllib.request.Request(
-        GATEWAY_URL,
+        _get_gateway_url(),
         data=payload,
         headers={
             "Content-Type": "application/json",
@@ -108,7 +132,7 @@ def _call_direct(prompt: str) -> str:
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
     response = client.invoke_agent_runtime(
-        agentRuntimeArn=AGENT_ARN,
+        agentRuntimeArn=_get_agent_arn(),
         payload=json.dumps({"prompt": prompt}),
     )
 

@@ -92,21 +92,9 @@ def _openai_usage_impl(start_date: str, end_date: str) -> str:
 
 
 def _parse_date(date_str: str, end_of_day: bool = False) -> datetime:
-    """Parse a date string, handling multiple formats the LLM might use."""
-    from dateutil import parser as dateutil_parser
-
-    date_str = date_str.strip()
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        try:
-            dt = dateutil_parser.parse(date_str).replace(tzinfo=timezone.utc)
-        except (ValueError, TypeError):
-            return datetime.now(timezone.utc) - timedelta(days=30)
-
-    if end_of_day:
-        dt = dt.replace(hour=23, minute=59, second=59)
-    return dt
+    """Parse a date string. Raises ValueError on failure."""
+    from utils.dates import parse_date
+    return parse_date(date_str, end_of_day=end_of_day)
 
 
 def _fetch_completions_usage(
