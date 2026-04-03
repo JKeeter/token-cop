@@ -135,6 +135,29 @@ def _call_direct(prompt: str) -> str:
 
 
 @mcp.tool()
+def token_cop_context_audit(project_dir: str = ".") -> str:
+    """Audit your Claude Code environment for context bloat.
+
+    Inspects CLAUDE.md files, MCP servers, skills, and plugins to find
+    wasted tokens in your session context. Returns a report with scores
+    and pruning recommendations.
+
+    Args:
+        project_dir: Project root to audit (default: current directory).
+    """
+    from tools.context_audit import context_audit
+
+    result = context_audit(project_dir)
+    # Strands tools may return a tool_result dict
+    if isinstance(result, dict) and "content" in result:
+        return "".join(
+            block.get("text", "") for block in result["content"]
+            if isinstance(block, dict)
+        )
+    return str(result)
+
+
+@mcp.tool()
 def token_cop(prompt: str) -> str:
     """Query Token Cop for LLM token usage across AWS Bedrock, OpenRouter, and OpenAI.
 

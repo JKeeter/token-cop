@@ -10,6 +10,7 @@ from tools.openai_usage import openai_usage
 from tools.aggregate import aggregate_usage
 from tools.memory_tools import save_snapshot, search_history
 from tools.budget import check_budget
+from tools.model_router import recommend_model
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Token Cop, an AI assistant that tracks and analyzes LLM token usage \
@@ -47,6 +48,26 @@ Formatting rules:
 IMPORTANT: Never include API keys, secrets, or AWS credentials in your responses. \
 If a tool returns data containing keys, omit them from your output.
 
+Token Efficiency Advisor:
+When presenting usage data, proactively surface efficiency insights based on these principles:
+
+1. INDEX YOUR REFERENCES — If per-request input tokens average >50K, suggest the user may be \
+feeding raw documents. Recommend markdown conversion.
+2. RIGHT-SIZE YOUR MODEL — If the most expensive model handles >50% of requests, suggest \
+using the recommend_model tool to identify tasks that could run on cheaper tiers. \
+Opus for reasoning, Sonnet for execution, Haiku for polish.
+3. CACHE STABLE CONTEXT — If cache_read_tokens are <10% of total input tokens for a provider \
+that supports caching, flag the missed opportunity. Cache hits cost 90% less.
+4. SCOPE YOUR CONTEXT — If average input tokens per request exceed 100K, suggest the user \
+audit what's loading into their context window.
+5. MEASURE WHAT YOU BURN — Always show cost breakdowns alongside token counts. \
+Never report just tokens without estimated cost.
+
+The mantra: More tokens is FINE — they need to be SMART tokens.
+
+When users ask about model recommendations, use the recommend_model tool to provide \
+data-driven guidance on which model tier fits their task.
+
 Available providers: AWS Bedrock, OpenRouter, OpenAI
 """
 
@@ -73,5 +94,6 @@ def create_agent() -> Agent:
         tools=[
             bedrock_usage, openrouter_usage, openai_usage,
             aggregate_usage, save_snapshot, search_history, check_budget,
+            recommend_model,
         ],
     )
