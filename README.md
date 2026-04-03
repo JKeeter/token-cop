@@ -15,6 +15,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 - **Heavy file ingestion** - Auto-converts PDF, DOCX, PPTX, XLSX to markdown/CSV before Claude reads them (10-100x token savings)
 - **Smart model router** - Classifies tasks into reasoning/execution/polish tiers and recommends the most cost-effective model
 - **Token audit** - Scores usage across 6 dimensions (document ingestion, model mix, cache utilization, cost concentration, efficiency trend, savings opportunities) with A-F grades
+- **Invocation log analysis** - Deep analysis of Bedrock S3 invocation logs across 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, and context overhead detection (MCP tools, skills, plugins)
 - **Context audit** - Inspects Claude Code environment for bloat: CLAUDE.md weight, MCP servers, skill/plugin tax, pruning recommendations
 - **Team dashboard** - Streamlit app with org-wide spend overview, per-model efficiency analysis, and optimization recommendations
 - **Weekly reports** - Markdown/JSON reports for Slack/email with efficiency grades and top recommendations
@@ -113,6 +114,7 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 | `search_history` | Semantic search over past usage snapshots |
 | `recommend_model` | Classify a task and recommend the best model tier |
 | `token_audit` | Score usage efficiency across 6 dimensions (A-F grade) |
+| `analyze_invocation_logs` | Deep analysis of Bedrock S3 invocation logs (7 dimensions) |
 | `context_audit` | Inspect Claude Code environment for context bloat (local only) |
 
 ## Project Structure
@@ -134,6 +136,7 @@ token-cop/
 │   ├── memory_tools.py     # save_snapshot + search_history
 │   ├── model_router.py     # Smart model tier recommendations
 │   ├── audit.py            # Token efficiency audit (6 dimensions)
+│   ├── invocation_logs.py  # Bedrock S3 invocation log analysis (7 dimensions)
 │   └── context_audit.py    # Claude Code environment bloat detection
 ├── models/
 │   ├── schemas.py          # TokenUsageRecord dataclass
@@ -221,6 +224,25 @@ Run a comprehensive efficiency audit:
 Scores 6 dimensions: document ingestion, model mix, cache utilization, cost concentration, efficiency trend, and top savings opportunity. Returns an A-F grade with prioritized recommendations.
 
 Schedule weekly audits in Claude Code: `/loop 1w /tokcop-audit`
+
+### Invocation Log Analysis
+
+Analyze actual Bedrock request/response payloads from S3 invocation logs:
+
+```
+/tokcop Analyze my invocation logs for the last 5 days
+```
+
+Requires Bedrock model invocation logging to S3. Configure:
+```bash
+# Set the S3 bucket where Bedrock invocation logs land
+aws ssm put-parameter --name /token-cop/bedrock-log-bucket --type String --value "your-log-bucket"
+
+# Optional: set custom prefix (default: AWSLogs)
+aws ssm put-parameter --name /token-cop/bedrock-log-prefix --type String --value "custom/prefix"
+```
+
+Analyzes 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, and context overhead (MCP tools, skills, plugins in system prompts). Automatically included in `token_audit` when S3 bucket is configured.
 
 ### Context Audit
 

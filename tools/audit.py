@@ -80,6 +80,34 @@ def _token_audit_impl(days: int) -> str:
         doc_score, mix_score, cache_score, conc_score, trend_score, savings, current_models
     )
 
+    # Invocation log analysis (if S3 bucket configured)
+    invocation_analysis = None
+    from agent.config import get_secret
+    if get_secret("BEDROCK_LOG_BUCKET"):
+        try:
+            from tools.invocation_logs import analyze_invocation_logs
+            raw = analyze_invocation_logs(days=days)
+            if isinstance(raw, dict) and "content" in raw:
+                text = "".join(
+                    block.get("text", "") for block in raw["content"]
+                    if isinstance(block, dict)
+                )
+            else:
+                text = str(raw)
+            invocation_data = json.loads(text)
+            if "error" not in invocation_data:
+                invocation_analysis = invocation_data
+                # Merge invocation log recommendations
+                for rec in invocation_data.get("recommendations", []):
+                    if rec not in recommendations:
+                        recommendations.append(rec)
+        except Exception:
+            pass
+    else:
+        recommendations.append(
+            "Configure BEDROCK_LOG_BUCKET to enable request-level invocation log analysis"
+        )
+
     result = {
         "period": {"start": start_date, "end": end_date, "days": days},
         "summary": {
@@ -100,6 +128,8 @@ def _token_audit_impl(days: int) -> str:
         "overall_score": overall_score,
         "recommendations": recommendations,
     }
+    if invocation_analysis:
+        result["invocation_log_analysis"] = invocation_analysis
     return json.dumps(result, indent=2)
 
 

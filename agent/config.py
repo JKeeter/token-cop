@@ -16,6 +16,8 @@ SSM_PARAMS = {
     "OPENROUTER_API_KEY": f"{SSM_PREFIX}/openrouter-api-key",
     "OPENAI_ADMIN_API_KEY": f"{SSM_PREFIX}/openai-admin-api-key",
     "OPENAI_ORG_ID": f"{SSM_PREFIX}/openai-org-id",
+    "BEDROCK_LOG_BUCKET": f"{SSM_PREFIX}/bedrock-log-bucket",
+    "BEDROCK_LOG_PREFIX": f"{SSM_PREFIX}/bedrock-log-prefix",
 }
 
 _ssm_cache: dict[str, str] = {}

@@ -35,6 +35,23 @@ class ProviderSummary:
 
 
 @dataclass
+class InvocationLogEntry:
+    """Parsed entry from a Bedrock model invocation log."""
+    model_id: str
+    normalized_model: str
+    timestamp: str
+    input_token_count: int = 0
+    output_token_count: int = 0
+    system_prompt_hash: str = ""
+    system_prompt_length: int = 0
+    system_prompt_text: str = ""
+    user_message_text: str = ""
+    message_count: int = 0
+    classified_tier: str = ""
+    model_tier: str = ""
+
+
+@dataclass
 class UsageSummary:
     """Aggregated usage across providers and time ranges."""
     start_date: str

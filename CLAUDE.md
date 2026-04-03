@@ -10,7 +10,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
-- `agent/agent.py` - Strands Agent with system prompt, 10 tools, and efficiency advisor
+- `agent/agent.py` - Strands Agent with system prompt, 11 tools, and efficiency advisor
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
 - `tools/` - One file per provider, each exports a @tool-decorated function
@@ -26,7 +26,8 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `search_history` - Semantic search over past snapshots
 - `check_budget` - Burn rate + projection
 - `recommend_model` - Classify task → reasoning/execution/polish tier recommendation
-- `token_audit` - Score usage efficiency across 6 dimensions (A-F grade)
+- `token_audit` - Score usage efficiency across 6 dimensions (A-F grade), auto-calls invocation log analysis when S3 configured
+- `analyze_invocation_logs` - Deep analysis of Bedrock S3 invocation logs: 7 dimensions (prompt bloat, model-task mismatch, caching, I/O ratio, system prompt weight, response waste, context overhead)
 - `context_audit` - Inspect Claude Code environment for context bloat (local MCP tool)
 
 ## Smart Token Management (v2)
@@ -38,8 +39,19 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `models/model_tiers.py` - Reasoning/execution/polish tier definitions + task classifier
 - `dashboard/` - Streamlit team dashboard (overview, per-model, recommendations)
 - `scripts/generate_report.py` - Weekly markdown/JSON report for Slack/email
-- System prompt includes Token Efficiency Advisor (5 commandments)
+- System prompt includes Token Efficiency Advisor (6 commandments)
 - Mantra: "More tokens is FINE — they need to be SMART tokens"
+
+## Invocation Log Analysis
+- Requires Bedrock model invocation logging enabled to S3
+- Config: `BEDROCK_LOG_BUCKET` env var or SSM `/token-cop/bedrock-log-bucket`
+- Config: `BEDROCK_LOG_PREFIX` env var or SSM `/token-cop/bedrock-log-prefix` (default: `AWSLogs`)
+- S3 path pattern: `{prefix}/{accountId}/BedrockModelInvocationLogs/YYYY/MM/DD/`
+- Logs are gzipped JSON files with batches of invocation records
+- Sampling: stratified random across days, default 300 entries max
+- 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead
+- Context overhead dimension measures actual MCP tool schemas, skills, plugins, CLAUDE.md in system prompts (complements context_audit static estimates)
+- IAM needs: `s3:ListBucket` + `s3:GetObject` on the log bucket
 
 ## Patterns
 - Tools return JSON strings (Strands convention)

@@ -11,6 +11,7 @@ from tools.aggregate import aggregate_usage
 from tools.memory_tools import save_snapshot, search_history
 from tools.budget import check_budget
 from tools.model_router import recommend_model
+from tools.invocation_logs import analyze_invocation_logs
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Token Cop, an AI assistant that tracks and analyzes LLM token usage \
@@ -65,6 +66,12 @@ Never report just tokens without estimated cost.
 
 The mantra: More tokens is FINE — they need to be SMART tokens.
 
+6. INSPECT YOUR LOGS — When users ask for deep prompt-level analysis, or when \
+token_audit reveals low scores in document_ingestion, model_mix, or cache_utilization, \
+use analyze_invocation_logs to examine actual Bedrock request/response payloads from S3. \
+This reveals specific prompt bloat, caching misses, model-task mismatches, and context \
+overhead from MCP tools, skills, and plugins.
+
 When users ask about model recommendations, use the recommend_model tool to provide \
 data-driven guidance on which model tier fits their task.
 
@@ -94,6 +101,6 @@ def create_agent() -> Agent:
         tools=[
             bedrock_usage, openrouter_usage, openai_usage,
             aggregate_usage, save_snapshot, search_history, check_budget,
-            recommend_model,
+            recommend_model, analyze_invocation_logs,
         ],
     )
