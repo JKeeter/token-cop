@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from agent.config import AWS_REGION, get_secret
 from agent.tracing import get_tracer
 from models.model_tiers import classify_task, get_model_tier
-from models.normalization import normalize_model_name
+from models.normalization import normalize_model_name, normalize_principal_arn
 from models.pricing import PRICING_PER_MILLION
 from models.schemas import InvocationLogEntry
 
@@ -85,7 +85,7 @@ def _analyze_impl(days: int, sample_size: int) -> str:
             "total_objects": len(objects),
         })
 
-    # Run all 7 analysis dimensions
+    # Run all 8 analysis dimensions
     prompt_bloat = _analyze_prompt_bloat(entries)
     model_mismatch = _analyze_model_task_mismatch(entries)
     caching = _analyze_caching_opportunities(entries)
@@ -93,11 +93,12 @@ def _analyze_impl(days: int, sample_size: int) -> str:
     sys_weight = _analyze_system_prompt_weight(entries)
     response_waste = _analyze_response_waste(entries)
     context_overhead = _analyze_context_overhead(entries)
+    attribution_coverage = _analyze_attribution_coverage(entries)
 
     # Build findings and recommendations
     findings = _build_findings(
         prompt_bloat, model_mismatch, caching, io_ratio,
-        sys_weight, response_waste, context_overhead,
+        sys_weight, response_waste, context_overhead, attribution_coverage,
     )
     recommendations = _build_recommendations(findings)
     grade = _grade(findings)
@@ -116,6 +117,7 @@ def _analyze_impl(days: int, sample_size: int) -> str:
         "system_prompt_weight": sys_weight,
         "response_waste": response_waste,
         "context_overhead": context_overhead,
+        "attribution_coverage": attribution_coverage,
         "findings": findings,
         "overall_grade": grade,
         "recommendations": recommendations,
@@ -313,6 +315,36 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
     if user_message_text:
         classified_tier = classify_task(user_message_text)
 
+    # Attribution fields (AWS Bedrock granular cost attribution, April 17, 2026).
+    # Bedrock schemas vary — try the common identity/profile/metadata keys and
+    # scrub AWS account IDs before storing so downstream output is commit-safe.
+    identity = record.get("identity", {}) or {}
+    iam_principal = ""
+    if isinstance(identity, dict):
+        iam_principal = identity.get("arn", "") or ""
+    iam_principal = normalize_principal_arn(iam_principal) if iam_principal else ""
+
+    inference_profile_arn = (
+        record.get("inferenceProfileArn", "")
+        or record.get("inferenceProfileIdentifier", "")
+    )
+    if not inference_profile_arn and isinstance(input_body, dict):
+        inference_cfg = input_body.get("inferenceConfig", {}) or {}
+        if isinstance(inference_cfg, dict):
+            inference_profile_arn = inference_cfg.get("profileArn", "") or ""
+    if not isinstance(inference_profile_arn, str):
+        inference_profile_arn = ""
+    inference_profile_arn = (
+        normalize_principal_arn(inference_profile_arn) if inference_profile_arn else ""
+    )
+
+    request_metadata = record.get("requestMetadata", {}) or {}
+    principal_tags: dict[str, str] = {}
+    if isinstance(request_metadata, dict):
+        # requestMetadata is a map of string keys → string values set by callers
+        # (e.g., via Bedrock Converse request metadata). Coerce to string/string.
+        principal_tags = {str(k): str(v) for k, v in request_metadata.items()}
+
     return InvocationLogEntry(
         model_id=model_id,
         normalized_model=normalized,
@@ -326,6 +358,9 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
         message_count=message_count,
         classified_tier=classified_tier,
         model_tier=model_tier,
+        iam_principal=iam_principal,
+        inference_profile_arn=inference_profile_arn,
+        principal_tags=principal_tags,
     )
 
 
@@ -670,6 +705,89 @@ def _analyze_context_overhead(entries: list[InvocationLogEntry]) -> dict:
     }
 
 
+def _analyze_attribution_coverage(entries: list[InvocationLogEntry]) -> dict:
+    """Dimension 8: How well is Bedrock cost-attribution metadata populated?
+
+    Measures coverage of the AWS Bedrock granular cost attribution feature
+    (April 17, 2026): how many sampled calls carry an IAM principal, an
+    inference profile ARN, and request metadata tags. Low coverage means
+    cost can't be broken down per-tenant/per-team.
+    """
+    total = len(entries)
+    if total == 0:
+        return {"status": "no_entries", "score": 8}
+
+    with_principal = sum(1 for e in entries if e.iam_principal)
+    with_profile = sum(1 for e in entries if e.inference_profile_arn)
+    with_metadata = sum(1 for e in entries if e.principal_tags)
+
+    principal_rate = with_principal / total
+    profile_rate = with_profile / total
+    metadata_rate = with_metadata / total
+
+    # Top principals and profiles (display-safe — already scrubbed)
+    principal_counts = Counter(e.iam_principal for e in entries if e.iam_principal)
+    profile_counts = Counter(e.inference_profile_arn for e in entries if e.inference_profile_arn)
+
+    # Recommendation prioritized on the weakest axis
+    if profile_rate < 0.10:
+        recommendation = (
+            f"Only {profile_rate * 100:.0f}% of calls carry an inference profile ARN — "
+            "adopt application inference profiles to enable per-tenant cost attribution."
+        )
+    elif metadata_rate < 0.10:
+        recommendation = (
+            f"Only {metadata_rate * 100:.0f}% of calls include requestMetadata tags — "
+            "tag invocations with team/project metadata to unlock per-tag cost rollups."
+        )
+    elif principal_rate < 0.50:
+        recommendation = (
+            f"Only {principal_rate * 100:.0f}% of calls record an IAM principal — "
+            "check that invocation logging is capturing identity.arn for attribution."
+        )
+    elif profile_rate < 0.50 or metadata_rate < 0.50:
+        recommendation = (
+            "Attribution coverage is partial — "
+            f"{profile_rate * 100:.0f}% inference profiles, {metadata_rate * 100:.0f}% metadata tags. "
+            "Expand usage to all teams to get a full per-tenant cost view."
+        )
+    else:
+        recommendation = "Attribution coverage is healthy — per-principal/per-tag rollups should be reliable."
+
+    # Score: weight profile + metadata heavier than principal since they're the
+    # granular-attribution signals introduced by the new Bedrock feature.
+    # Any axis <10% = 3, <30% = 5, <60% = 7, otherwise 9.
+    worst_rate = min(profile_rate, metadata_rate)
+    if worst_rate < 0.10:
+        score = 3
+    elif worst_rate < 0.30:
+        score = 5
+    elif worst_rate < 0.60:
+        score = 7
+    else:
+        score = 9
+
+    return {
+        "total_entries": total,
+        "iam_principal": {
+            "count": with_principal,
+            "rate": round(principal_rate, 3),
+            "top": [{"arn": a, "count": c} for a, c in principal_counts.most_common(5)],
+        },
+        "inference_profile_arn": {
+            "count": with_profile,
+            "rate": round(profile_rate, 3),
+            "top": [{"arn": a, "count": c} for a, c in profile_counts.most_common(5)],
+        },
+        "request_metadata": {
+            "count": with_metadata,
+            "rate": round(metadata_rate, 3),
+        },
+        "recommendation": recommendation,
+        "score": score,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Findings and grading
 # ---------------------------------------------------------------------------
@@ -682,6 +800,7 @@ def _build_findings(
     sys_weight: dict,
     response_waste: dict,
     context_overhead: dict,
+    attribution_coverage: dict,
 ) -> list[dict]:
     """Collect analysis results into prioritized findings."""
     findings = []
@@ -750,6 +869,18 @@ def _build_findings(
              f"{overhead.get('system_reminders', {}).get('count', 0)} system reminders)",
              "high" if score < 4 else "medium")
 
+    score = attribution_coverage.get("score", 10)
+    if score < 7:
+        profile_rate = attribution_coverage.get("inference_profile_arn", {}).get("rate", 0)
+        metadata_rate = attribution_coverage.get("request_metadata", {}).get("rate", 0)
+        principal_rate = attribution_coverage.get("iam_principal", {}).get("rate", 0)
+        _add("attribution_coverage", attribution_coverage,
+             f"Cost-attribution coverage is thin — "
+             f"{profile_rate * 100:.0f}% inference profiles, "
+             f"{metadata_rate * 100:.0f}% request metadata, "
+             f"{principal_rate * 100:.0f}% IAM principal",
+             "high" if score < 4 else "medium")
+
     # Sort by severity then score
     severity_order = {"high": 0, "medium": 1, "low": 2}
     findings.sort(key=lambda f: (severity_order.get(f["severity"], 2), f["score"]))
@@ -790,6 +921,11 @@ def _build_recommendations(findings: list[dict]) -> list[str]:
         elif cat == "context_overhead":
             recs.append("Reduce context overhead from MCP tools, skills, and plugins — "
                        "disable unused MCP servers and prune skill definitions to cut per-request cost")
+        elif cat == "attribution_coverage":
+            recs.append("Adopt application inference profiles and tag invocations with "
+                       "requestMetadata (team, project, tenant) to enable per-principal / per-tag "
+                       "cost attribution via Bedrock's granular cost attribution feature "
+                       "(see docs/cost-attribution.md)")
 
     if not recs:
         recs.append("Token usage looks efficient! No major optimization opportunities found.")

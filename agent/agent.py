@@ -12,6 +12,7 @@ from tools.memory_tools import save_snapshot, search_history
 from tools.budget import check_budget
 from tools.model_router import recommend_model
 from tools.invocation_logs import analyze_invocation_logs
+from tools.attribution import attribution_breakdown
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Token Cop, an AI assistant that tracks and analyzes LLM token usage \
@@ -72,6 +73,13 @@ use analyze_invocation_logs to examine actual Bedrock request/response payloads 
 This reveals specific prompt bloat, caching misses, model-task mismatches, and context \
 overhead from MCP tools, skills, and plugins.
 
+When the user asks about cost attribution ("which team", "which role", "who spent", \
+"break down cost by user/principal/tag"), call attribution_breakdown. It reads the \
+April 2026 AWS Bedrock granular cost attribution data via Cost Explorer and slices \
+Bedrock cost by IAM principal, tag (e.g. `tag:team`), usage type, or account. \
+For per-principal budget checks, follow up with check_budget using its new \
+`principal` argument (the caller supplies the principal-scoped spend number).
+
 When users ask about model recommendations, use the recommend_model tool to provide \
 data-driven guidance on which model tier fits their task.
 
@@ -101,6 +109,6 @@ def create_agent() -> Agent:
         tools=[
             bedrock_usage, openrouter_usage, openai_usage,
             aggregate_usage, save_snapshot, search_history, check_budget,
-            recommend_model, analyze_invocation_logs,
+            recommend_model, analyze_invocation_logs, attribution_breakdown,
         ],
     )

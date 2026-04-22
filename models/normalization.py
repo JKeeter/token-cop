@@ -1,3 +1,5 @@
+import re
+
 # Maps provider-specific model IDs to normalized names.
 # Normalized names match keys in pricing.py PRICING_PER_MILLION.
 
@@ -63,3 +65,42 @@ def normalize_model_name(raw_model_id: str) -> str:
             return normalized
     # Return the raw ID if no match found
     return raw_model_id
+
+
+# AWS ARN format: arn:<partition>:<service>:<region>:<account>:<resource>
+# Match the account-ID segment (12 digits) and replace with the git-filter
+# placeholder. We support both IAM (no region segment) and STS ARNs, and we
+# preserve everything else including role names and session names.
+_ARN_ACCOUNT_RE = re.compile(
+    r"^(arn:aws[a-z0-9\-]*:[a-z0-9\-]+:[a-z0-9\-]*:)(\d{12})(:.*)$"
+)
+
+_ACCOUNT_PLACEHOLDER = "<REPLACE-WITH-YOUR-AWS-ACCOUNT>"
+
+
+def normalize_principal_arn(arn: str) -> str:
+    """Strip the AWS account ID from an IAM/STS ARN for display-safe output.
+
+    Replaces the 12-digit account ID segment with the existing git-filter
+    placeholder (``<REPLACE-WITH-YOUR-AWS-ACCOUNT>``). Preserves partition,
+    service, region, and the full resource path (role/user name + session
+    name, if present). Returns the input unchanged when it does not look
+    like an ARN.
+
+    Examples:
+        >>> normalize_principal_arn(
+        ...     "arn:aws:sts::123456789012:assumed-role/TokenCopRole/session-123"
+        ... )
+        'arn:aws:sts::<REPLACE-WITH-YOUR-AWS-ACCOUNT>:assumed-role/TokenCopRole/session-123'
+        >>> normalize_principal_arn("arn:aws:iam::123456789012:user/alice")
+        'arn:aws:iam::<REPLACE-WITH-YOUR-AWS-ACCOUNT>:user/alice'
+        >>> normalize_principal_arn("not-an-arn")
+        'not-an-arn'
+    """
+    if not arn or not isinstance(arn, str):
+        return arn
+    match = _ARN_ACCOUNT_RE.match(arn)
+    if not match:
+        return arn
+    prefix, _account, suffix = match.groups()
+    return f"{prefix}{_ACCOUNT_PLACEHOLDER}{suffix}"

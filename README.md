@@ -19,6 +19,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 - **Context audit** - Inspects Claude Code environment for bloat: CLAUDE.md weight, MCP servers, skill/plugin tax, pruning recommendations
 - **Team dashboard** - Streamlit app with org-wide spend overview, per-model efficiency analysis, and optimization recommendations
 - **Weekly reports** - Markdown/JSON reports for Slack/email with efficiency grades and top recommendations
+- **Granular cost attribution** - Per-IAM-principal, per-team, and per-project Bedrock cost breakdowns via Cost Explorer (consumes the [April 17, 2026 AWS Bedrock cost attribution feature](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/iam-principal-cost-allocation.html)); one-shot setup with `scripts/enable_cur_attribution.py`
 
 ### Infrastructure
 - **MCP Gateway** - HTTPS endpoint with Cognito JWT authentication
@@ -115,6 +116,7 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 | `recommend_model` | Classify a task and recommend the best model tier |
 | `token_audit` | Score usage efficiency across 6 dimensions (A-F grade) |
 | `analyze_invocation_logs` | Deep analysis of Bedrock S3 invocation logs (7 dimensions) |
+| `attribution_breakdown` | Group Bedrock cost by IAM principal / tag / usage type / account via Cost Explorer |
 | `context_audit` | Inspect Claude Code environment for context bloat (local only) |
 
 ## Project Structure
@@ -137,6 +139,7 @@ token-cop/
 │   ├── model_router.py     # Smart model tier recommendations
 │   ├── audit.py            # Token efficiency audit (6 dimensions)
 │   ├── invocation_logs.py  # Bedrock S3 invocation log analysis (7 dimensions)
+│   ├── attribution.py      # Cost Explorer attribution breakdown (principal / tag / usage type)
 │   └── context_audit.py    # Claude Code environment bloat detection
 ├── models/
 │   ├── schemas.py          # TokenUsageRecord dataclass
@@ -158,6 +161,7 @@ token-cop/
 │   ├── convert_heavy_file.py  # Document → markdown/CSV converter
 │   ├── check_heavy_file.py    # Claude Code hook helper
 │   ├── generate_report.py     # Weekly efficiency report generator
+│   ├── enable_cur_attribution.py  # One-shot CUR 2.0 + IAM principal attribution setup
 │   ├── setup_policies.py      # Cedar policy demos
 │   ├── eval_demo.py           # Interactive evaluation demo
 │   └── eval_regression.py     # CI regression suite
@@ -169,7 +173,8 @@ token-cop/
 ├── docs/
 │   ├── mcp-gateway.md      # MCP Gateway architecture
 │   ├── policies.md         # Cedar policy documentation
-│   └── evaluations.md      # Evaluation framework docs
+│   ├── evaluations.md      # Evaluation framework docs
+│   └── cost-attribution.md # IAM principal / CUR 2.0 cost attribution guide
 ├── mcp_server.py           # MCP server for Claude Code (+ context audit)
 ├── .claude/settings.json   # Hook: intercept binary file reads
 ├── Dockerfile              # Container build
@@ -268,6 +273,29 @@ python -m scripts.generate_report --period monthly --format json
 ```
 
 The dashboard provides: org-wide spend overview, per-model efficiency analysis, and prioritized optimization recommendations. Set `TOKEN_COP_DASHBOARD_PASSWORD` env var for access control (default: `tokencop`).
+
+## Cost Attribution
+
+Break down AWS Bedrock spend by IAM principal, team tag, usage type, or linked account. Consumes the April 17, 2026 AWS granular cost attribution feature (IAM principal column in CUR 2.0 + `iamPrincipal/*` cost-allocation tags).
+
+```bash
+# One-time setup (in the payer account)
+python -m scripts.enable_cur_attribution --bucket my-billing-bucket
+
+# Inspect state
+python -m scripts.enable_cur_attribution --status
+```
+
+Then ask Token Cop:
+
+```
+/tokcop break down Bedrock spend by IAM principal last 7 days
+/tokcop how much did team=ml-research spend this month?
+```
+
+Tag activation and the first CUR 2.0 delivery each take 24–48 hours. Token Cop queries Cost Explorer (no Athena/Glue pipeline required).
+
+See [docs/cost-attribution.md](docs/cost-attribution.md) for the full setup, IAM permissions table, multi-tenant gateway guidance, and troubleshooting.
 
 ## Local Development
 

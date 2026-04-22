@@ -11,21 +11,60 @@ from models.schemas import TokenUsageRecord
 
 
 @tool
-def bedrock_usage(start_date: str = "", end_date: str = "", model_filter: str = "") -> str:
-    """Get AWS Bedrock token usage from CloudWatch metrics.
+def bedrock_usage(
+    start_date: str = "",
+    end_date: str = "",
+    model_filter: str = "",
+    group_by: str = "model",
+) -> str:
+    """Get AWS Bedrock token usage, grouped by model (default) or by attribution dimension.
 
-    Queries CloudWatch for Bedrock model invocation metrics including
-    input tokens, output tokens, and invocation count. Returns usage
-    broken down by model.
+    Default path queries CloudWatch for Bedrock model invocation metrics
+    (input/output/cache tokens + invocation counts) broken down by model.
+
+    When ``group_by`` asks for an attribution dimension that CloudWatch
+    can't slice by (IAM principal, cost-allocation tag), this tool
+    delegates to ``attribution_breakdown`` in ``tools/attribution.py``
+    (Cost Explorer-backed, requires CUR 2.0 attribution data).
 
     Args:
         start_date: Start date in YYYY-MM-DD format. Defaults to 7 days ago.
         end_date: End date in YYYY-MM-DD format. Defaults to today.
         model_filter: Optional model ID substring to filter by (e.g. 'claude', 'nova').
+            Only applied when ``group_by == "model"``.
+        group_by: Grouping dimension.
+            * ``"model"`` (default) — CloudWatch path, per-model token breakdown.
+            * ``"principal"`` — per-IAM-principal Bedrock spend (delegates to
+              ``attribution_breakdown``).
+            * ``"tag:<key>"`` — per cost-allocation tag (e.g. ``tag:team``),
+              delegates to ``attribution_breakdown``.
     """
     tracer = get_tracer()
-    with tracer.start_as_current_span("tool.bedrock_usage", attributes={"token_cop.provider": "bedrock"}):
-        return _bedrock_usage_impl(start_date, end_date, model_filter)
+    with tracer.start_as_current_span(
+        "tool.bedrock_usage",
+        attributes={
+            "token_cop.provider": "bedrock",
+            "token_cop.group_by": group_by,
+        },
+    ):
+        if group_by == "model":
+            return _bedrock_usage_impl(start_date, end_date, model_filter)
+        if group_by == "principal" or group_by.startswith("tag:"):
+            # Lazy import to avoid a circular dependency (attribution.py
+            # imports tracing; bedrock_usage.py is imported by agent.py
+            # alongside attribution in parallel).
+            from tools.attribution import attribution_breakdown
+            return attribution_breakdown(
+                dimension=group_by,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        return json.dumps({
+            "error": (
+                f"Unsupported group_by '{group_by}'. Use 'model', "
+                "'principal', or 'tag:<key>'."
+            ),
+        })
 
 
 def _bedrock_usage_impl(start_date: str, end_date: str, model_filter: str) -> str:

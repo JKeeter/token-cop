@@ -121,6 +121,93 @@ def fetch_audit_data(days: int = 7) -> dict | None:
         return None
 
 
+def get_principal_breakdown(start_date: str, end_date: str) -> dict:
+    """Call attribution_breakdown and return parsed principal-grouped data.
+
+    Returns a dict with keys:
+        - groups: list of {"principal", "cost", "usage_quantity", "percentage"}
+                  sorted by cost descending
+        - total_cost: float, total Bedrock cost in the period
+        - caveats: list of caveat strings surfaced by the tool
+        - enabled: bool, True if attribution data was returned, False if
+                   Cost Explorer access failed or CUR attribution isn't
+                   enabled yet (callers should render a setup CTA)
+        - error: optional str explaining why `enabled` is False
+
+    The tool may fail in several ways (Cost Explorer not granted,
+    CUR 2.0 attribution not enabled, tag not activated, empty result).
+    All of these collapse to ``enabled=False`` so the dashboard can
+    render a single consistent setup CTA.
+    """
+    from tools.attribution import attribution_breakdown
+
+    try:
+        raw = attribution_breakdown(
+            dimension="principal",
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except Exception as exc:
+        logger.warning("attribution_breakdown raised: %s", exc)
+        return {
+            "groups": [],
+            "total_cost": 0.0,
+            "caveats": [],
+            "enabled": False,
+            "error": str(exc),
+        }
+
+    parsed = _parse_tool_result(raw)
+    if parsed is None:
+        # _parse_tool_result treats any JSON with an "error" field as None
+        # and logs it. Re-parse the raw string so we can surface the error
+        # message to the UI.
+        try:
+            if isinstance(raw, dict) and "content" in raw:
+                text = "".join(
+                    block.get("text", "")
+                    for block in raw["content"]
+                    if isinstance(block, dict)
+                )
+            else:
+                text = str(raw)
+            err_data = json.loads(text)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            err_data = {}
+        return {
+            "groups": [],
+            "total_cost": 0.0,
+            "caveats": err_data.get("caveats", []),
+            "enabled": False,
+            "error": err_data.get("error", "attribution_breakdown returned no data"),
+        }
+
+    groups_raw = parsed.get("groups", [])
+    total_cost = float(parsed.get("total_cost_usd", 0.0) or 0.0)
+    caveats = list(parsed.get("caveats", []) or [])
+
+    groups = []
+    for g in groups_raw:
+        cost = float(g.get("cost_usd", 0.0) or 0.0)
+        pct = (cost / total_cost * 100) if total_cost > 0 else 0.0
+        groups.append({
+            "principal": g.get("key", "(unknown)"),
+            "cost": round(cost, 2),
+            "usage_quantity": float(g.get("usage_quantity", 0.0) or 0.0),
+            "percentage": round(pct, 1),
+        })
+
+    enabled = bool(groups)
+
+    return {
+        "groups": groups,
+        "total_cost": round(total_cost, 2),
+        "caveats": caveats,
+        "enabled": enabled,
+        "error": None if enabled else "No attribution groups returned",
+    }
+
+
 def compute_smart_token_score(data: dict) -> float:
     """Compute a composite 'Smart Token Score' (0-100).
 

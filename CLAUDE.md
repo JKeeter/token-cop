@@ -10,7 +10,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
-- `agent/agent.py` - Strands Agent with system prompt, 11 tools, and efficiency advisor
+- `agent/agent.py` - Strands Agent with system prompt, 12 tools, and efficiency advisor
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
 - `tools/` - One file per provider, each exports a @tool-decorated function
@@ -28,6 +28,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `recommend_model` - Classify task → reasoning/execution/polish tier recommendation
 - `token_audit` - Score usage efficiency across 6 dimensions (A-F grade), auto-calls invocation log analysis when S3 configured
 - `analyze_invocation_logs` - Deep analysis of Bedrock S3 invocation logs: 7 dimensions (prompt bloat, model-task mismatch, caching, I/O ratio, system prompt weight, response waste, context overhead)
+- `attribution_breakdown` - Break down Bedrock cost via Cost Explorer by IAM principal, cost-allocation tag, usage type, or linked account
 - `context_audit` - Inspect Claude Code environment for context bloat (local MCP tool)
 
 ## Smart Token Management (v2)
@@ -51,7 +52,23 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Sampling: stratified random across days, default 300 entries max
 - 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead
 - Context overhead dimension measures actual MCP tool schemas, skills, plugins, CLAUDE.md in system prompts (complements context_audit static estimates)
+- Log records now carry `iam_principal` + `inference_profile` fields extracted by `tools/invocation_logs.py` (post-April 2026)
 - IAM needs: `s3:ListBucket` + `s3:GetObject` on the log bucket
+
+## Cost Attribution
+- Consumes the April 17, 2026 AWS Bedrock granular cost attribution feature (IAM principal + `iamPrincipal/*` tags in CUR 2.0)
+- Tool: `attribution_breakdown` — dimensions: `principal`, `tag:<key>`, `usage_type`, `account`
+- Data source: AWS Cost Explorer (`ce:GetCostAndUsage`); CUR 2.0 parquet reader deferred
+- Principal grouping uses the `aws:PrincipalArn` tag path in CE (no native `IAM_PRINCIPAL` dimension as of 2026-04)
+- One-shot setup: `python -m scripts.enable_cur_attribution --bucket <s3-bucket>` creates/updates a CUR 2.0 export with `INCLUDE_IAM_PRINCIPAL_DATA=TRUE` and activates every `iamPrincipal/*` cost-allocation tag
+- Setup is idempotent — safe to re-run; `--status` reports current state, `--tags-only` skips export step, `--dry-run` previews actions
+- Tag activation + first CUR 2.0 delivery each take 24–48h (AWS Billing consistency lag); script warns about this
+- Runtime IAM needs: `ce:GetCostAndUsage`, `ce:GetDimensionValues`, `ce:GetTags`
+- Setup-script IAM needs: `bcm-data-exports:*`, `ce:UpdateCostAllocationTagsStatus`, `ce:ListCostAllocationTags`
+- Principal ARNs in tool output are scrubbed via `models/normalization.normalize_principal_arn` so account IDs don't leak
+- `check_budget` accepts `principal=` or `tag_filter=` for scoped burn-rate checks; dashboard `views/per_user.py` groups by real IAM principal
+- Multi-tenant gateway caveat: attribute further via STS `AssumeRole` session tags (500/s rate limit, 1h credential TTL)
+- Docs: `docs/cost-attribution.md` — full setup, IAM tables, troubleshooting
 
 ## Patterns
 - Tools return JSON strings (Strands convention)

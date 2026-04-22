@@ -14,6 +14,11 @@ class TokenUsageRecord:
     total_tokens: int = 0
     request_count: int = 0
     estimated_cost_usd: float = 0.0
+    # AWS Bedrock granular cost attribution fields (April 17, 2026 feature).
+    # Empty defaults preserve backward compatibility with existing kwargs callers.
+    iam_principal: str = ""
+    inference_profile_arn: str = ""
+    principal_tags: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.total_tokens == 0:
@@ -49,6 +54,10 @@ class InvocationLogEntry:
     message_count: int = 0
     classified_tier: str = ""
     model_tier: str = ""
+    # AWS Bedrock granular cost attribution fields (April 17, 2026 feature).
+    iam_principal: str = ""
+    inference_profile_arn: str = ""
+    principal_tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
