@@ -5,7 +5,11 @@ import re
 
 MODEL_ALIASES = {
     # AWS Bedrock model IDs (from actual CloudWatch metrics)
+    "anthropic.claude-opus-4-7": "claude-opus-4.7",
     "us.anthropic.claude-opus-4-7": "claude-opus-4.7",
+    "eu.anthropic.claude-opus-4-7": "claude-opus-4.7",
+    "jp.anthropic.claude-opus-4-7": "claude-opus-4.7",
+    "au.anthropic.claude-opus-4-7": "claude-opus-4.7",
     "global.anthropic.claude-opus-4-7": "claude-opus-4.7",
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": "claude-sonnet-4.5",
     "global.anthropic.claude-opus-4-6-v1": "claude-opus-4.6",
