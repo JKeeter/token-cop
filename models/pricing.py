@@ -1,8 +1,9 @@
 # Pricing per 1M tokens (USD) - update as prices change
-# Source: provider pricing pages as of March 2026
+# Source: provider pricing pages as of May 2026
 PRICING_PER_MILLION = {
     # Anthropic models
-    "claude-opus-4.6": {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
+    "claude-opus-4.7": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
+    "claude-opus-4.6": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "claude-sonnet-4.6": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
     "claude-sonnet-4.5": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
     "claude-haiku-4.5": {"input": 0.80, "output": 4.00, "cache_read": 0.08, "cache_write": 1.00},
