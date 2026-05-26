@@ -21,6 +21,13 @@ SSM_PARAMS = {
     "OPENAI_ORG_ID": f"{SSM_PREFIX}/openai-org-id",
     "BEDROCK_LOG_BUCKET": f"{SSM_PREFIX}/bedrock-log-bucket",
     "BEDROCK_LOG_PREFIX": f"{SSM_PREFIX}/bedrock-log-prefix",
+    # Enforcement (opt-in, provisioned by scripts/setup_enforcement.py).
+    # Absence of these parameters means enforcement is disabled — tools/enforcement.py
+    # detects this and returns enabled=false instead of erroring.
+    "ENFORCEMENT_TABLE": f"{SSM_PREFIX}/enforcement-table",
+    "ENFORCEMENT_DENY_POLICY_ARN": f"{SSM_PREFIX}/enforcement-deny-policy-arn",
+    "ENFORCEMENT_DEFAULT_BUDGET_USD": f"{SSM_PREFIX}/enforcement-default-budget-usd",
+    "ENFORCEMENT_LOG_GROUP": f"{SSM_PREFIX}/enforcement-log-group",
 }
 
 _ssm_cache: dict[str, str] = {}

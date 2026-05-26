@@ -13,6 +13,11 @@ from tools.budget import check_budget
 from tools.model_router import recommend_model
 from tools.invocation_logs import analyze_invocation_logs
 from tools.attribution import attribution_breakdown
+from tools.enforcement import (
+    enforcement_status,
+    list_denied_principals,
+    set_principal_budget,
+)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Token Cop, an AI assistant that tracks and analyzes LLM token usage \
@@ -110,5 +115,6 @@ def create_agent() -> Agent:
             bedrock_usage, openrouter_usage, openai_usage,
             aggregate_usage, save_snapshot, search_history, check_budget,
             recommend_model, analyze_invocation_logs, attribution_breakdown,
+            enforcement_status, set_principal_budget, list_denied_principals,
         ],
     )

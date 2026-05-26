@@ -20,6 +20,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 - **Team dashboard** - Streamlit app with org-wide spend overview, per-model efficiency analysis, and optimization recommendations
 - **Weekly reports** - Markdown/JSON reports for Slack/email with efficiency grades and top recommendations
 - **Granular cost attribution** - Per-IAM-principal, per-team, and per-project Bedrock cost breakdowns via Cost Explorer (consumes the [April 17, 2026 AWS Bedrock cost attribution feature](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/iam-principal-cost-allocation.html)); one-shot setup with `scripts/enable_cur_attribution.py`
+- **Budget enforcement (opt-in)** - Hard-cap monthly Bedrock spend per IAM principal with ~1-5 min lag. CloudWatch Logs subscription meters every invocation into DynamoDB; an over-budget principal is blocked by attaching a managed deny policy until the next monthly reset. Setup: `scripts/setup_enforcement.py --enable`
 
 ### Infrastructure
 - **MCP Gateway** - HTTPS endpoint with Cognito JWT authentication
@@ -118,6 +119,9 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 | `analyze_invocation_logs` | Deep analysis of Bedrock S3 invocation logs (7 dimensions) |
 | `attribution_breakdown` | Group Bedrock cost by IAM principal / tag / usage type / account via Cost Explorer |
 | `context_audit` | Inspect Claude Code environment for context bloat (local only) |
+| `enforcement_status` | Report enforcement state — global, or per-principal current spend / budget / denied flag |
+| `set_principal_budget` | Override the default monthly Bedrock budget for a specific IAM principal |
+| `list_denied_principals` | List principals currently blocked by Token Cop enforcement |
 
 ## Project Structure
 
@@ -140,7 +144,8 @@ token-cop/
 │   ├── audit.py            # Token efficiency audit (6 dimensions)
 │   ├── invocation_logs.py  # Bedrock S3 invocation log analysis (7 dimensions)
 │   ├── attribution.py      # Cost Explorer attribution breakdown (principal / tag / usage type)
-│   └── context_audit.py    # Claude Code environment bloat detection
+│   ├── context_audit.py    # Claude Code environment bloat detection
+│   └── enforcement.py      # Budget enforcement: status, set budget, list denied (opt-in)
 ├── models/
 │   ├── schemas.py          # TokenUsageRecord dataclass
 │   ├── pricing.py          # Per-model cost lookup table
@@ -162,6 +167,10 @@ token-cop/
 │   ├── check_heavy_file.py    # Claude Code hook helper
 │   ├── generate_report.py     # Weekly efficiency report generator
 │   ├── enable_cur_attribution.py  # One-shot CUR 2.0 + IAM principal attribution setup
+│   ├── setup_enforcement.py   # Budget enforcement provisioning (opt-in)
+│   ├── lambda/
+│   │   ├── token_meter.py     # Per-invocation meter + deny attacher Lambda
+│   │   └── budget_reset.py    # Monthly reset Lambda (detach + clear markers)
 │   ├── setup_policies.py      # Cedar policy demos
 │   ├── eval_demo.py           # Interactive evaluation demo
 │   └── eval_regression.py     # CI regression suite
@@ -174,7 +183,8 @@ token-cop/
 │   ├── mcp-gateway.md      # MCP Gateway architecture
 │   ├── policies.md         # Cedar policy documentation
 │   ├── evaluations.md      # Evaluation framework docs
-│   └── cost-attribution.md # IAM principal / CUR 2.0 cost attribution guide
+│   ├── cost-attribution.md # IAM principal / CUR 2.0 cost attribution guide
+│   └── enforcement.md      # Budget enforcement architecture, setup, caveats
 ├── mcp_server.py           # MCP server for Claude Code (+ context audit)
 ├── .claude/settings.json   # Hook: intercept binary file reads
 ├── Dockerfile              # Container build
@@ -296,6 +306,41 @@ Then ask Token Cop:
 Tag activation and the first CUR 2.0 delivery each take 24–48 hours. Token Cop queries Cost Explorer (no Athena/Glue pipeline required).
 
 See [docs/cost-attribution.md](docs/cost-attribution.md) for the full setup, IAM permissions table, multi-tenant gateway guidance, and troubleshooting.
+
+## Budget Enforcement (opt-in)
+
+Hard-cap monthly Bedrock spend per IAM principal. Token Cop core works without this — it's an opt-in module.
+
+A CloudWatch Logs subscription on the Bedrock invocation log group forwards each call to a meter Lambda, which atomically increments per-principal usage in DynamoDB. When a principal crosses their monthly budget, the meter attaches a `TokenCopBedrockBudgetDeny` managed policy to that user/role; subsequent `bedrock:InvokeModel*` and `bedrock:Converse*` calls return `AccessDenied`. An EventBridge schedule (1st of month, 00:05 UTC) detaches the deny policy from every blocked principal.
+
+```bash
+# Preview what will be created
+python -m scripts.setup_enforcement --dry-run --enable
+
+# Provision (default budget: $200/principal/month)
+python -m scripts.setup_enforcement --enable
+
+# With a custom default budget and log group
+python -m scripts.setup_enforcement --enable \
+    --default-budget-usd 500 \
+    --log-group /aws/bedrock/invocations
+
+# Inspect / tear down
+python -m scripts.setup_enforcement --status
+python -m scripts.setup_enforcement --teardown
+```
+
+Then drive it through Token Cop:
+
+```
+/tokcop what's the enforcement status for arn:aws:iam::...user/alice?
+/tokcop set alice's monthly Bedrock budget to $300
+/tokcop who's currently blocked by enforcement?
+```
+
+Caveats: 1–5 minute lag (a determined user can burn ~$10–50 past the cap on expensive models); assumed-role principals meter per role, not per session (shared role = shared budget); no self-service unblock flow.
+
+See [docs/enforcement.md](docs/enforcement.md) for the architecture, IAM permissions, and manual unblock recipe.
 
 ## Local Development
 

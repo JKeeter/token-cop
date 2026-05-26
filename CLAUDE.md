@@ -93,6 +93,19 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Set `TOKEN_COP_BACKEND=direct` to bypass gateway and call runtime via boto3/IAM
 - `/tokcop <question>` - Claude Code skill to query token usage
 
+## Budget Enforcement (Option 3, opt-in)
+- Provisioned via `python -m scripts.setup_enforcement --enable` (idempotent)
+- Hard-caps monthly Bedrock spend per IAM principal with ~1-5 min lag
+- Resources (all `token-cop-enforcement-*` prefix): DynamoDB usage table, `TokenCopBedrockBudgetDeny` managed policy, meter Lambda, reset Lambda, EventBridge monthly schedule, CloudWatch Logs subscription on `/aws/bedrock/invocations`
+- Meter Lambda parses CWL subscription events, increments `cost_usd` in DDB atomically, attaches deny policy on first overage
+- Reset Lambda runs `cron(5 0 1 * ? *)` (1st of month 00:05 UTC) — detaches deny policy and clears `denied` markers
+- DDB schema: PK=`principal_arn`, SK=`YYYY-MM` (usage row) | `budget` (per-principal override) | `denied` (active block marker)
+- Tools: `enforcement_status`, `set_principal_budget`, `list_denied_principals` (graceful "not enabled" when SSM keys absent)
+- SSM keys: `/token-cop/enforcement-{table,deny-policy-arn,default-budget-usd,log-group}`
+- Lambda pricing table is duplicated inline in `scripts/lambda/token_meter.py` to keep zero-dependency — update both when prices change
+- Assumed-role principals meter per-role not per-session (shared role = shared budget)
+- Docs: `docs/enforcement.md`
+
 ## Policies
 - Policy Engine: `token_cop_policy_engine` (created by `scripts/setup_policies.py`)
 - 3 demo Cedar policies: permit-all, cognito-client-only, forbid-demo
