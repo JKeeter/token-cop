@@ -219,28 +219,51 @@ def _get_log_config() -> tuple[str, str]:
     return bucket, prefix
 
 
+def _discover_account_prefixes(s3, bucket: str, prefix: str) -> list[str]:
+    """Find `{prefix}/{accountId}/` sub-prefixes. Trailing slash is required
+    so CommonPrefixes returns the account level, not `{prefix}/` itself."""
+    base = prefix.rstrip("/") + "/"
+    try:
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=base, Delimiter="/", MaxKeys=100)
+    except Exception as exc:
+        logger.debug("Account prefix discovery failed for %s: %s", base, exc)
+        return []
+    return [cp["Prefix"] for cp in resp.get("CommonPrefixes", [])]
+
+
 def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
-    """List S3 objects matching the date-based prefix pattern."""
+    """List Bedrock invocation-log S3 objects across the last `days` days.
+
+    Handles the real layout
+    `{prefix}/{accountId}/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/…`
+    as well as account-less and region-less fallbacks. Account prefixes are
+    discovered once and applied to every day (data may be in a past month).
+    """
     now = datetime.now(timezone.utc)
     objects = []
+    paginator = s3.get_paginator("list_objects_v2")
+    regions = ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1")
+
+    # Discover account bases once. Empty string = account-less fallback path.
+    account_bases = _discover_account_prefixes(s3, bucket, prefix)
+    base_prefix = prefix.rstrip("/")
+    roots = [ab.rstrip("/") for ab in account_bases] + [base_prefix]
 
     for day_offset in range(days):
         day = now - timedelta(days=day_offset)
-        # Bedrock logs land under: {prefix}/{accountId}/BedrockModelInvocationLogs/{YYYY/MM/DD}/
-        # We don't know the account ID, so list with a broader prefix and filter by date path
         date_suffix = day.strftime("%Y/%m/%d")
 
-        paginator = s3.get_paginator("list_objects_v2")
-        # Common Bedrock CWL/S3 export prefix patterns. Region-partitioned
-        # paths (…/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/) are the
-        # current default; keep the older region-less patterns as fallback.
         candidate_prefixes = []
-        for region in ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"):
-            candidate_prefixes.append(
-                f"{prefix}/BedrockModelInvocationLogs/{region}/{date_suffix}"
-            )
-        candidate_prefixes.append(f"{prefix}/BedrockModelInvocationLogs/{date_suffix}")
-        candidate_prefixes.append(f"{prefix}/{date_suffix}")
+        for root in roots:
+            for region in regions:
+                candidate_prefixes.append(
+                    f"{root}/BedrockModelInvocationLogs/{region}/{date_suffix}"
+                )
+            candidate_prefixes.append(f"{root}/BedrockModelInvocationLogs/{date_suffix}")
+        # Region-less, account-less legacy fallback.
+        candidate_prefixes.append(f"{base_prefix}/{date_suffix}")
+
+        found_for_day = False
         for pfx in candidate_prefixes:
             try:
                 for page in paginator.paginate(Bucket=bucket, Prefix=pfx, MaxKeys=1000):
@@ -250,29 +273,12 @@ def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
                             "Size": obj.get("Size", 0),
                             "date": day.strftime("%Y-%m-%d"),
                         })
-                if objects:
-                    break  # Found objects with this prefix pattern
+                        found_for_day = True
             except Exception as exc:
                 logger.debug("S3 list failed for prefix %s: %s", pfx, exc)
                 continue
-
-        # Also try with account ID embedded in path
-        if not objects and day_offset == 0:
-            try:
-                resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=10)
-                for cp in resp.get("CommonPrefixes", []):
-                    acct_prefix = cp["Prefix"]
-                    for region in ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"):
-                        pfx = f"{acct_prefix}BedrockModelInvocationLogs/{region}/{date_suffix}"
-                        for page in paginator.paginate(Bucket=bucket, Prefix=pfx, MaxKeys=1000):
-                            for obj in page.get("Contents", []):
-                                objects.append({
-                                    "Key": obj["Key"],
-                                    "Size": obj.get("Size", 0),
-                                    "date": day.strftime("%Y-%m-%d"),
-                                })
-            except Exception as exc:
-                logger.debug("S3 account prefix discovery failed: %s", exc)
+            if found_for_day:
+                break  # first matching pattern for this day is enough
 
     return objects
 

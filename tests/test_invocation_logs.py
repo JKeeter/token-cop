@@ -237,5 +237,52 @@ class MismatchConfidenceGatingTests(unittest.TestCase):
         self.assertEqual(result["mismatched_entries"], 1)
 
 
+class AccountSegmentListingTests(unittest.TestCase):
+    def test_traverses_account_segment_across_past_days(self):
+        # Real layout: {prefix}/{ACCOUNT}/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/
+        s3 = MagicMock()
+
+        def list_v2(Bucket, Prefix, Delimiter=None, MaxKeys=None):
+            # Account discovery: trailing-slash prefix yields the account below.
+            if Delimiter == "/" and Prefix == "AWSLogs/":
+                return {"CommonPrefixes": [{"Prefix": "AWSLogs/123456789012/"}]}
+            return {"CommonPrefixes": []}
+        s3.list_objects_v2.side_effect = list_v2
+
+        paginator = MagicMock()
+        s3.get_paginator.return_value = paginator
+
+        def paginate(Bucket, Prefix, MaxKeys):
+            # Only the account+region-partitioned prefix has an object.
+            if Prefix.startswith("AWSLogs/123456789012/BedrockModelInvocationLogs/us-east-1/"):
+                return [{"Contents": [{"Key": Prefix + "/f.json.gz", "Size": 42}]}]
+            return [{}]
+        paginator.paginate.side_effect = paginate
+
+        # days=40 so "today" (day 0) is empty but a past day matches — proving
+        # discovery is not gated to day_offset == 0.
+        objs = _list_log_objects(s3, "bucket", "AWSLogs", 40)
+        self.assertTrue(objs, "should find objects under the account segment")
+        self.assertTrue(all("123456789012" in o["Key"] for o in objs))
+        self.assertTrue(any("us-east-1" in o["Key"] for o in objs))
+
+    def test_account_discovery_uses_trailing_slash(self):
+        s3 = MagicMock()
+        seen_prefixes = []
+
+        def list_v2(Bucket, Prefix, Delimiter=None, MaxKeys=None):
+            if Delimiter == "/":
+                seen_prefixes.append(Prefix)
+            return {"CommonPrefixes": []}
+        s3.list_objects_v2.side_effect = list_v2
+        paginator = MagicMock()
+        s3.get_paginator.return_value = paginator
+        paginator.paginate.side_effect = lambda **kw: [{}]
+
+        _list_log_objects(s3, "bucket", "AWSLogs", 1)
+        self.assertIn("AWSLogs/", seen_prefixes,
+                      "discovery must list with a trailing slash to surface the account prefix")
+
+
 if __name__ == "__main__":
     unittest.main()
