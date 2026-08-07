@@ -30,6 +30,7 @@ def _entry(**kwargs) -> InvocationLogEntry:
         "model_id": "us.anthropic.claude-opus-4-6-v1",
         "normalized_model": "claude-opus-4.6",
         "timestamp": "2026-07-01T00:00:00Z",
+        "classification_confidence": 1.0,  # high confidence by default for existing tests
     }
     base.update(kwargs)
     return InvocationLogEntry(**base)
@@ -209,6 +210,31 @@ class BodySignalTests(unittest.TestCase):
         self.assertTrue(sig["has_code"])
         self.assertEqual(sig["message_count"], 3)
         self.assertEqual(sig["user_message_text"], "now add a test")
+
+
+class MismatchConfidenceGatingTests(unittest.TestCase):
+    def _entry(self, **kw):
+        base = {"model_id": "m", "normalized_model": "claude-opus-4.6",
+                "timestamp": "2026-04-03T00:00:00Z"}
+        base.update(kw)
+        return InvocationLogEntry(**base)
+
+    def test_low_confidence_entries_excluded(self):
+        from tools.invocation_logs import _analyze_model_task_mismatch
+        entries = [
+            # high-confidence mismatch: counts
+            self._entry(model_tier="reasoning", classified_tier="polish",
+                        classification_confidence=0.9, input_token_count=1000),
+            # low-confidence: must be skipped, not counted as classifiable
+            self._entry(model_tier="reasoning", classified_tier="polish",
+                        classification_confidence=0.2, input_token_count=1000),
+            # unknown: skipped
+            self._entry(model_tier="reasoning", classified_tier="unknown",
+                        classification_confidence=0.0, input_token_count=1000),
+        ]
+        result = _analyze_model_task_mismatch(entries, days=7)
+        self.assertEqual(result["classified_entries"], 1)
+        self.assertEqual(result["mismatched_entries"], 1)
 
 
 if __name__ == "__main__":

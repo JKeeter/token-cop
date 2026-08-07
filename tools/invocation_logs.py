@@ -27,6 +27,7 @@ _SYSTEM_PROMPT_MAX = 8192  # 8KB — enough for context overhead pattern matchin
 _USER_MESSAGE_MAX = 1024
 _RESPONSE_MAX = 512
 BODY_FETCH_CAP = 300  # max offloaded bodies to fetch per analysis run
+CONF_THRESHOLD = 0.5  # mismatch dimension ignores classifications below this
 
 
 def _extract_body_signals(body: dict) -> dict:
@@ -55,6 +56,17 @@ def _extract_body_signals(body: dict) -> dict:
     return {"user_message_text": text, "message_count": message_count, "has_code": has_code}
 
 
+def _looks_like_code(text: str) -> bool:
+    return "```" in text or "def " in text or "import " in text or "function " in text
+
+
+def _offloaded_body_path(record: dict) -> str:
+    inp = record.get("input", {})
+    if isinstance(inp, dict):
+        return inp.get("inputBodyS3Path", "") or ""
+    return ""
+
+
 def _fetch_body(s3, bucket: str, s3_path: str) -> dict | None:
     """Fetch and parse an offloaded inputBodyS3Path object. None on failure."""
     if not s3_path:
@@ -75,6 +87,23 @@ def _fetch_body(s3, bucket: str, s3_path: str) -> dict | None:
     except Exception as exc:
         logger.debug("Body fetch failed for %s: %s", key, exc)
         return None
+
+
+def _enrich_entry(entry: InvocationLogEntry, body: dict) -> None:
+    """Re-classify an entry using signals recovered from the offloaded body."""
+    sig = _extract_body_signals(body)
+    if not sig["user_message_text"]:
+        return
+    entry.user_message_text = sig["user_message_text"]
+    entry.message_count = sig["message_count"] or entry.message_count
+    result = classify_task(
+        sig["user_message_text"],
+        input_tokens=entry.input_token_count,
+        has_code=sig["has_code"],
+        message_count=sig["message_count"],
+    )
+    entry.classified_tier = result.tier
+    entry.classification_confidence = result.confidence
 
 
 @tool
@@ -271,6 +300,7 @@ def _sample_objects(objects: list[dict], sample_size: int) -> list[dict]:
 def _parse_log_entries(s3, bucket: str, objects: list[dict]) -> list[InvocationLogEntry]:
     """Parse invocation log entries from S3 objects."""
     entries = []
+    bodies_fetched = 0
     for obj in objects:
         try:
             resp = s3.get_object(Bucket=bucket, Key=obj["Key"])
@@ -290,8 +320,17 @@ def _parse_log_entries(s3, bucket: str, objects: list[dict]) -> list[InvocationL
                 try:
                     record = json.loads(line)
                     entry = _parse_record(record)
-                    if entry:
-                        entries.append(entry)
+                    if not entry:
+                        continue
+                    # If the prompt was offloaded and we have budget, fetch it
+                    # to recover real message text + structural signals.
+                    body_path = _offloaded_body_path(record)
+                    if body_path and not entry.user_message_text and bodies_fetched < BODY_FETCH_CAP:
+                        fetched = _fetch_body(s3, bucket, body_path)
+                        bodies_fetched += 1
+                        if fetched:
+                            _enrich_entry(entry, fetched)
+                    entries.append(entry)
                 except json.JSONDecodeError:
                     continue
         except Exception as exc:
@@ -391,8 +430,16 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
 
     model_tier = get_model_tier(normalized) or ""
     classified_tier = ""
+    classification_confidence = 0.0
     if user_message_text:
-        classified_tier = classify_task(user_message_text)
+        result = classify_task(
+            user_message_text,
+            input_tokens=input_tokens,
+            has_code=_looks_like_code(user_message_text),
+            message_count=message_count,
+        )
+        classified_tier = result.tier
+        classification_confidence = result.confidence
 
     # Attribution fields (AWS Bedrock granular cost attribution, April 17, 2026).
     # Bedrock schemas vary — try the common identity/profile/metadata keys and
@@ -436,6 +483,7 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
         user_message_text=user_message_text,
         message_count=message_count,
         classified_tier=classified_tier,
+        classification_confidence=classification_confidence,
         model_tier=model_tier,
         iam_principal=iam_principal,
         inference_profile_arn=inference_profile_arn,
@@ -490,6 +538,8 @@ def _analyze_model_task_mismatch(
     for e in entries:
         if not e.model_tier or not e.classified_tier:
             continue
+        if e.classified_tier == "unknown" or e.classification_confidence < CONF_THRESHOLD:
+            continue  # insufficient classifier confidence — don't guess
         classified_count += 1
         model_level = tier_order.get(e.model_tier, 1)
         task_level = tier_order.get(e.classified_tier, 1)
