@@ -46,35 +46,19 @@ Claude Code ──► MCP Server (stdio) ──► MCP Gateway (HTTPS/JWT) ─�
 - Python 3.13+
 - API keys for enabled providers (OpenRouter, OpenAI — optional)
 
-### AWS Account ID Git Filter
-
-This project uses a git clean/smudge filter to keep the AWS account ID out of version control. Files contain `<REPLACE-WITH-YOUR-AWS-ACCOUNT>` as a placeholder. Two options:
-
-1. **Automatic** — Run the global filter setup (stores your account ID in SSM, auto-replaces on checkout):
-   ```bash
-   # One-time SSM setup
-   aws ssm put-parameter --name /global/aws-account-id --type SecureString --value "YOUR_ACCOUNT_ID"
-   # Install the filter
-   bash ~/.git-filters/setup.sh
-   ```
-2. **Manual** — Replace `<REPLACE-WITH-YOUR-AWS-ACCOUNT>` with your 12-digit AWS account ID in:
-   - `.bedrock_agentcore.yaml`
-   - `mcp_server.py`
-   - `scripts/setup_policies.py`
-
 ## Setup
 
 ```bash
 # Clone
 git clone <repo-url> && cd token-cop
 
-# Set up git filter (or manually replace account IDs — see above)
-bash ~/.git-filters/setup.sh
-git checkout -- .bedrock_agentcore.yaml mcp_server.py scripts/setup_policies.py
-
 # Virtual environment
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+# Replace the <REPLACE-WITH-YOUR-AWS-ACCOUNT> placeholder with your 12-digit
+# account ID in .bedrock_agentcore.yaml, mcp_server.py, scripts/setup_policies.py.
+# (Optional: automate this with a git filter — see "AWS Account ID Git Filter" below.)
 
 # Configure API keys in SSM (optional — only for providers you use)
 aws ssm put-parameter --name /token-cop/openrouter-api-key --type SecureString --value "sk-or-..."
@@ -226,7 +210,7 @@ Ask Token Cop which model tier fits your task:
 /tokcop Should I use Opus or Sonnet to reformat this JSON?
 ```
 
-Three tiers: **Reasoning** (Opus — architecture, debugging), **Execution** (Sonnet — code gen, data processing), **Polish** (Haiku — formatting, summarizing).
+Three tiers: **Reasoning** (Opus — architecture, debugging), **Execution** (Sonnet — code gen, data processing), **Polish** (Haiku — formatting, summarizing). When a task is too ambiguous to classify, the advisor returns low confidence rather than guessing — see [Task Classification](#task-classification).
 
 ### Token Audit
 
@@ -387,5 +371,26 @@ python -m scripts.eval_demo                   # Interactive 5-act demo
 python -m scripts.eval_regression             # CI regression suite (8 test cases)
 python -m scripts.eval_demo --reset           # Clean slate between demos
 ```
+
+## Task Classification
+
+The invocation-log analysis and the `recommend_model` advisor share one deterministic (no-LLM) classifier, `classify_task` in `models/model_tiers.py`. It returns a `TierResult` (`tier`, `confidence`, `signals`) where `tier` is `reasoning`, `execution`, `polish`, or `unknown`.
+
+- **Weighted keyword scoring** with structural signals (input size, code presence, message count) as optional inputs — the log path supplies them, `recommend_model` omits them.
+- **Confidence gate:** when evidence is weak or ambiguous the classifier returns `unknown` rather than guessing. The model-task-mismatch dimension excludes `unknown`/low-confidence entries so its findings stay trustworthy.
+- **Cache-aware sizing:** on cached traffic `inputTokenCount` is only the uncached delta, so classification uses effective size (`input + cacheRead + cacheWrite`). Size and message-count signals only *amplify* a text signal — a large cached context alone is the norm, not evidence of reasoning.
+- **Tuning:** `scripts/compare_classifier.py` reports the tier distribution over real logs and can freeze an anonymized regression fixture (`--freeze-fixture`). Bucket is resolved from `--bucket`/`BEDROCK_LOG_BUCKET`/SSM, never hard-coded.
+
+## AWS Account ID Git Filter
+
+Repo-hygiene convenience, not required to run the project. A git clean/smudge filter keeps the AWS account ID out of version control; files carry `<REPLACE-WITH-YOUR-AWS-ACCOUNT>` as a placeholder. To automate replacement on checkout:
+
+```bash
+aws ssm put-parameter --name /global/aws-account-id --type SecureString --value "YOUR_ACCOUNT_ID"
+bash ~/.git-filters/setup.sh
+git checkout -- .bedrock_agentcore.yaml mcp_server.py scripts/setup_policies.py
+```
+
+Without the filter, just replace the placeholder manually (see Setup).
 
 See [docs/evaluations.md](docs/evaluations.md) for details.
