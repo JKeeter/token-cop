@@ -57,3 +57,21 @@ class StructuralSignalTests(unittest.TestCase):
                            has_code=False, message_count=0)
         self.assertEqual(a.tier, b.tier)
         self.assertEqual(a.confidence, b.confidence)
+
+
+import json
+from tools.model_router import _recommend_model_impl
+
+
+class RecommendModelIntegrationTests(unittest.TestCase):
+    def test_recommend_surfaces_confidence(self):
+        out = json.loads(_recommend_model_impl("implement the parser", ""))
+        self.assertEqual(out["recommended_tier"], "execution")
+        self.assertIn("confidence", out)
+
+    def test_recommend_unknown_defaults_gracefully(self):
+        # No-signal text -> unknown -> recommend_model must still return a tier
+        # (fall back to execution for the advisory, but report low confidence).
+        out = json.loads(_recommend_model_impl("yes continue", ""))
+        self.assertIn(out["recommended_tier"], ("execution", "unknown"))
+        self.assertEqual(out["confidence"], 0.0)

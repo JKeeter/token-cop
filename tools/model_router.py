@@ -28,7 +28,10 @@ def recommend_model(task_description: str, current_model: str = "") -> str:
 
 
 def _recommend_model_impl(task_description: str, current_model: str) -> str:
-    recommended_tier = classify_task(task_description)
+    result = classify_task(task_description)
+    # "unknown" has no tier definition; fall back to execution for the
+    # advisory recommendation, but preserve the (zero) confidence signal.
+    recommended_tier = result.tier if result.tier in TIERS else "execution"
     tier_info = TIERS[recommended_tier]
 
     # Get pricing for recommended models
@@ -47,8 +50,9 @@ def _recommend_model_impl(task_description: str, current_model: str) -> str:
         f"Recommended cost range: {tier_info['cost_range']}."
     )
 
-    result = {
+    output = {
         "recommended_tier": recommended_tier,
+        "confidence": result.confidence,
         "recommended_models": tier_info["models"],
         "estimated_cost_per_million": recommended_costs,
         "reasoning": reasoning,
@@ -75,7 +79,7 @@ def _recommend_model_impl(task_description: str, current_model: str) -> str:
                 )
                 savings_input = round(current_pricing["input"] - cheapest_rec["input"], 2)
                 savings_output = round(current_pricing["output"] - cheapest_rec["output"], 2)
-                result["savings_if_downgraded"] = {
+                output["savings_if_downgraded"] = {
                     "input_savings_per_million": savings_input,
                     "output_savings_per_million": savings_output,
                     "total_savings_per_million_tokens": round(savings_input + savings_output, 2),
@@ -95,11 +99,11 @@ def _recommend_model_impl(task_description: str, current_model: str) -> str:
                 assessment = "appropriate"
                 explanation = f"{normalized} is well-matched for this {recommended_tier}-tier task."
 
-            result["current_model_assessment"] = {
+            output["current_model_assessment"] = {
                 "assessment": assessment,
                 "current_model": normalized,
                 "current_tier": current_tier,
                 "explanation": explanation,
             }
 
-    return json.dumps(result, indent=2)
+    return json.dumps(output, indent=2)
