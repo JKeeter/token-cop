@@ -19,3 +19,22 @@ class WeightedTextScoringTests(unittest.TestCase):
     def test_clear_execution_task(self):
         result = classify_task("implement and refactor the parser module")
         self.assertEqual(result.tier, "execution")
+
+
+class ConfidenceAndUnknownTests(unittest.TestCase):
+    def test_no_signal_returns_unknown(self):
+        # "ok do it" / "yes continue" -> no keywords -> unknown, not execution.
+        result = classify_task("yes, continue")
+        self.assertEqual(result.tier, "unknown")
+        self.assertEqual(result.confidence, 0.0)
+
+    def test_low_margin_flags_low_confidence(self):
+        # One weak reasoning word vs one weak polish word -> near tie.
+        result = classify_task("analyze and summarize")
+        self.assertLess(result.confidence, 0.5)
+        self.assertIn(result.tier, ("reasoning", "polish"))
+
+    def test_signals_dict_exposes_per_tier_scores(self):
+        result = classify_task("implement the feature")
+        self.assertIn("execution", result.signals)
+        self.assertGreater(result.signals["execution"], 0.0)
