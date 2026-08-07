@@ -95,20 +95,26 @@ def _structural_scores(
     has_code: bool,
     message_count: int,
     reasoning_corroborated: bool = False,
+    execution_corroborated: bool = False,
 ) -> dict:
     """Additive structural nudges. All zero when signals are absent.
 
-    The message_count signal only reinforces reasoning when corroborated by
-    another signal (a reasoning text hit or a large input); a long
-    conversation alone is not evidence that the current turn is reasoning work.
+    Size and message-count signals only AMPLIFY an existing text signal — on
+    cache-heavy traffic a large effective context is the norm, not evidence of
+    reasoning work, so a size nudge must not create a verdict on its own. The
+    polish suppression from a huge prompt is unconditional (a 50K-token prompt
+    genuinely isn't a polish task), and has_code is a standalone signal.
     """
     s = {"reasoning": 0.0, "execution": 0.0, "polish": 0.0}
     if input_tokens > 50_000:
-        s["reasoning"] += 2.0
+        if reasoning_corroborated:
+            s["reasoning"] += 2.0
         s["polish"] -= 3.0
     elif input_tokens > 20_000:
-        s["reasoning"] += 1.0
-        s["execution"] += 1.0
+        if reasoning_corroborated:
+            s["reasoning"] += 1.0
+        if execution_corroborated:
+            s["execution"] += 1.0
     if has_code:
         s["execution"] += 1.5
         s["polish"] -= 1.0
@@ -152,10 +158,12 @@ def classify_task(
     is insufficient signal rather than silently defaulting.
     """
     scores = _text_scores(text)
-    reasoning_corroborated = scores["reasoning"] > 0 or input_tokens > 20_000
+    reasoning_corroborated = scores["reasoning"] > 0
+    execution_corroborated = scores["execution"] > 0
     structural = _structural_scores(
         input_tokens, has_code, message_count,
         reasoning_corroborated=reasoning_corroborated,
+        execution_corroborated=execution_corroborated,
     )
     for tier in scores:
         scores[tier] += structural[tier]

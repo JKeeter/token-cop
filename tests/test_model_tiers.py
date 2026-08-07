@@ -90,10 +90,13 @@ class MessageCountCorroborationTests(unittest.TestCase):
         result = classify_task("analyze the trade-off here", message_count=25)
         self.assertEqual(result.tier, "reasoning")
 
-    def test_long_convo_with_large_input_corroborates(self):
-        # Large input corroborates; message_count bonus may apply.
+    def test_large_input_alone_does_not_promote_reasoning(self):
+        # Large input is the norm on cache-heavy traffic; without a text signal
+        # it must NOT manufacture a reasoning verdict. (Reverses the earlier
+        # assumption that input size self-corroborates — see Task 3c.)
         result = classify_task("continue", message_count=25, input_tokens=60_000)
-        self.assertEqual(result.tier, "reasoning")
+        self.assertEqual(result.tier, "unknown")
+        self.assertEqual(result.confidence, 0.0)
 
     def test_message_count_alone_yields_unknown(self):
         # No text, no size — only a long conversation. Honest unknown, not
@@ -101,3 +104,30 @@ class MessageCountCorroborationTests(unittest.TestCase):
         result = classify_task("ok thanks", message_count=25)
         self.assertEqual(result.tier, "unknown")
         self.assertEqual(result.confidence, 0.0)
+
+
+class SizeCorroborationTests(unittest.TestCase):
+    def test_large_input_no_text_is_unknown(self):
+        # "Tool loaded." with 135K cached context -> no text signal -> unknown,
+        # NOT confident reasoning.
+        result = classify_task("Tool loaded.", input_tokens=135_000)
+        self.assertEqual(result.tier, "unknown")
+
+    def test_large_input_with_reasoning_text_amplifies(self):
+        # Text signal present -> size legitimately reinforces reasoning.
+        result = classify_task("analyze this", input_tokens=60_000)
+        self.assertEqual(result.tier, "reasoning")
+
+    def test_large_input_with_execution_text_amplifies(self):
+        result = classify_task("implement this", input_tokens=25_000)
+        self.assertEqual(result.tier, "execution")
+
+    def test_huge_input_still_suppresses_polish(self):
+        # polish suppression stays unconditional: "summarize" + 90K -> not polish.
+        result = classify_task("summarize", input_tokens=90_000)
+        self.assertNotEqual(result.tier, "polish")
+
+    def test_has_code_still_works_without_text(self):
+        # has_code is a standalone signal, not gated by corroboration.
+        result = classify_task("take a look", has_code=True, input_tokens=25_000)
+        self.assertEqual(result.tier, "execution")
