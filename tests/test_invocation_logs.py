@@ -53,6 +53,22 @@ class ModelTaskMismatchSavingsTests(unittest.TestCase):
         result = _analyze_model_task_mismatch([self._one_mismatch_entry()], days=14)
         self.assertAlmostEqual(result["estimated_weekly_savings_usd"], 1.25, places=2)
 
+    def test_population_scale_multiplies_savings(self):
+        # A 10x sample-to-population ratio scales the projected savings 10x,
+        # since only a fraction of log objects were sampled.
+        entry = self._one_mismatch_entry()
+        full = _analyze_model_task_mismatch([entry], days=7, population_scale=1.0)
+        scaled = _analyze_model_task_mismatch([entry], days=7, population_scale=10.0)
+        self.assertAlmostEqual(full["estimated_weekly_savings_usd"], 2.50, places=2)
+        self.assertAlmostEqual(scaled["estimated_weekly_savings_usd"], 25.00, places=2)
+
+    def test_population_scale_does_not_touch_rate_or_score(self):
+        entry = self._one_mismatch_entry()
+        full = _analyze_model_task_mismatch([entry], days=7, population_scale=1.0)
+        scaled = _analyze_model_task_mismatch([entry], days=7, population_scale=10.0)
+        self.assertEqual(full["mismatch_rate"], scaled["mismatch_rate"])
+        self.assertEqual(full["score"], scaled["score"])
+
     def test_savings_independent_of_entry_count(self):
         # Adding well-matched (non-mismatch) entries must not change the projected
         # savings — only the mismatched Opus call contributes.
@@ -98,6 +114,19 @@ class CachingSavingsProjectionTests(unittest.TestCase):
             weekly["potential_weekly_savings_usd"] * 7,
             places=2,
         )
+
+    def test_population_scale_multiplies_caching_savings(self):
+        entries = self._repeated_prompt_entries(4)
+        full = _analyze_caching_opportunities(list(entries), days=7, population_scale=1.0)
+        scaled = _analyze_caching_opportunities(list(entries), days=7, population_scale=5.0)
+        self.assertGreater(full["potential_weekly_savings_usd"], 0)
+        self.assertAlmostEqual(
+            scaled["potential_weekly_savings_usd"],
+            full["potential_weekly_savings_usd"] * 5,
+            places=2,
+        )
+        # Reuse ratio is a proportion — unaffected by population scaling.
+        self.assertEqual(full["reuse_ratio"], scaled["reuse_ratio"])
 
 
 class ContextOverheadClampTests(unittest.TestCase):

@@ -85,10 +85,16 @@ def _analyze_impl(days: int, sample_size: int) -> str:
             "total_objects": len(objects),
         })
 
+    # Sampling happens at the S3-object level, so the sampled entries represent
+    # only a fraction of the population. Scale absolute-dollar figures up by the
+    # object-level sampling ratio (rates and scores stay as-is — they're already
+    # representative proportions).
+    population_scale = len(objects) / len(sampled) if sampled else 1.0
+
     # Run all 8 analysis dimensions
     prompt_bloat = _analyze_prompt_bloat(entries)
-    model_mismatch = _analyze_model_task_mismatch(entries, days=days)
-    caching = _analyze_caching_opportunities(entries, days=days)
+    model_mismatch = _analyze_model_task_mismatch(entries, days=days, population_scale=population_scale)
+    caching = _analyze_caching_opportunities(entries, days=days, population_scale=population_scale)
     io_ratio = _analyze_io_ratio(entries)
     sys_weight = _analyze_system_prompt_weight(entries)
     response_waste = _analyze_response_waste(entries)
@@ -109,6 +115,7 @@ def _analyze_impl(days: int, sample_size: int) -> str:
             "total_objects": len(objects),
             "sampled_objects": len(sampled),
             "entries_analyzed": len(entries),
+            "population_scale": round(population_scale, 2),
         },
         "prompt_bloat": prompt_bloat,
         "model_task_mismatch": model_mismatch,
@@ -400,7 +407,9 @@ def _analyze_prompt_bloat(entries: list[InvocationLogEntry]) -> dict:
     }
 
 
-def _analyze_model_task_mismatch(entries: list[InvocationLogEntry], days: int = 7) -> dict:
+def _analyze_model_task_mismatch(
+    entries: list[InvocationLogEntry], days: int = 7, population_scale: float = 1.0
+) -> dict:
     """Dimension 2: Expensive models used for simple tasks."""
     tier_order = {"polish": 0, "execution": 1, "reasoning": 2}
     mismatches = []
@@ -433,9 +442,9 @@ def _analyze_model_task_mismatch(entries: list[InvocationLogEntry], days: int = 
         # Assume could use a model at half the cost
         sampled_savings += current_cost * 0.5
 
-    # Project the window-total savings to a weekly figure: normalize to a daily
-    # rate (savings / days) then scale to 7 days.
-    weekly_savings = sampled_savings * (7 / max(1, days))
+    # Project the sampled-window savings to a weekly, population-wide figure:
+    # scale up by the sampling ratio, then normalize the day window to 7 days.
+    weekly_savings = sampled_savings * population_scale * (7 / max(1, days))
 
     # Score: <5% mismatch = 10, 5-15% = 7, 15-30% = 4, >30% = 2
     if mismatch_rate < 0.05:
@@ -457,7 +466,9 @@ def _analyze_model_task_mismatch(entries: list[InvocationLogEntry], days: int = 
     }
 
 
-def _analyze_caching_opportunities(entries: list[InvocationLogEntry], days: int = 7) -> dict:
+def _analyze_caching_opportunities(
+    entries: list[InvocationLogEntry], days: int = 7, population_scale: float = 1.0
+) -> dict:
     """Dimension 3: Repeated system prompts that could benefit from caching."""
     hashes = [e.system_prompt_hash for e in entries if e.system_prompt_hash]
     if not hashes:
@@ -482,8 +493,9 @@ def _analyze_caching_opportunities(entries: list[InvocationLogEntry], days: int 
         cacheable_tokens = avg_sys_tokens * (count - 1)
         potential_savings += cacheable_tokens * 0.9 * 3.0 / 1_000_000
 
-    # Project the window-total savings to a weekly figure (see mismatch dimension).
-    potential_savings *= 7 / max(1, days)
+    # Scale to the full population, then project the window to a weekly figure
+    # (see mismatch dimension).
+    potential_savings *= population_scale * (7 / max(1, days))
 
     reuse_ratio = 1.0 - (unique / total) if total > 0 else 0
 
