@@ -87,8 +87,8 @@ def _analyze_impl(days: int, sample_size: int) -> str:
 
     # Run all 8 analysis dimensions
     prompt_bloat = _analyze_prompt_bloat(entries)
-    model_mismatch = _analyze_model_task_mismatch(entries)
-    caching = _analyze_caching_opportunities(entries)
+    model_mismatch = _analyze_model_task_mismatch(entries, days=days)
+    caching = _analyze_caching_opportunities(entries, days=days)
     io_ratio = _analyze_io_ratio(entries)
     sys_weight = _analyze_system_prompt_weight(entries)
     response_waste = _analyze_response_waste(entries)
@@ -400,7 +400,7 @@ def _analyze_prompt_bloat(entries: list[InvocationLogEntry]) -> dict:
     }
 
 
-def _analyze_model_task_mismatch(entries: list[InvocationLogEntry]) -> dict:
+def _analyze_model_task_mismatch(entries: list[InvocationLogEntry], days: int = 7) -> dict:
     """Dimension 2: Expensive models used for simple tasks."""
     tier_order = {"polish": 0, "execution": 1, "reasoning": 2}
     mismatches = []
@@ -425,13 +425,17 @@ def _analyze_model_task_mismatch(entries: list[InvocationLogEntry]) -> dict:
 
     mismatch_rate = len(mismatches) / classified_count
 
-    # Estimate savings from mismatches
-    estimated_savings = 0.0
+    # Estimate savings from mismatches over the sampled window.
+    sampled_savings = 0.0
     for m in mismatches:
         current_pricing = PRICING_PER_MILLION.get(m["model"], {})
         current_cost = current_pricing.get("input", 0) * m["input_tokens"] / 1_000_000
         # Assume could use a model at half the cost
-        estimated_savings += current_cost * 0.5
+        sampled_savings += current_cost * 0.5
+
+    # Project the window-total savings to a weekly figure: normalize to a daily
+    # rate (savings / days) then scale to 7 days.
+    weekly_savings = sampled_savings * (7 / max(1, days))
 
     # Score: <5% mismatch = 10, 5-15% = 7, 15-30% = 4, >30% = 2
     if mismatch_rate < 0.05:
@@ -447,13 +451,13 @@ def _analyze_model_task_mismatch(entries: list[InvocationLogEntry]) -> dict:
         "classified_entries": classified_count,
         "mismatched_entries": len(mismatches),
         "mismatch_rate": round(mismatch_rate, 3),
-        "estimated_weekly_savings_usd": round(estimated_savings * (7 / max(1, len(entries))) * len(entries), 2),
+        "estimated_weekly_savings_usd": round(weekly_savings, 2),
         "top_mismatches": _top_n_by_key(mismatches, "model", 5),
         "score": score,
     }
 
 
-def _analyze_caching_opportunities(entries: list[InvocationLogEntry]) -> dict:
+def _analyze_caching_opportunities(entries: list[InvocationLogEntry], days: int = 7) -> dict:
     """Dimension 3: Repeated system prompts that could benefit from caching."""
     hashes = [e.system_prompt_hash for e in entries if e.system_prompt_hash]
     if not hashes:
@@ -477,6 +481,9 @@ def _analyze_caching_opportunities(entries: list[InvocationLogEntry]) -> dict:
         # Assume average input pricing of $3/M tokens (Sonnet-range)
         cacheable_tokens = avg_sys_tokens * (count - 1)
         potential_savings += cacheable_tokens * 0.9 * 3.0 / 1_000_000
+
+    # Project the window-total savings to a weekly figure (see mismatch dimension).
+    potential_savings *= 7 / max(1, days)
 
     reuse_ratio = 1.0 - (unique / total) if total > 0 else 0
 
@@ -678,7 +685,9 @@ def _analyze_context_overhead(entries: list[InvocationLogEntry]) -> dict:
     core_tokens = max(0, total_prompt_tokens - total_overhead)
     breakdown["core_system_prompt"] = {"est_tokens": core_tokens}
 
-    overhead_ratio = total_overhead / total_prompt_tokens if total_prompt_tokens > 0 else 0
+    # Overhead is built from fixed per-item token estimates that can sum past the
+    # measured prompt size; clamp to [0, 1] so the ratio stays a valid fraction.
+    overhead_ratio = min(total_overhead / total_prompt_tokens, 1.0) if total_prompt_tokens > 0 else 0
 
     # Measure variation across entries (are all prompts similarly bloated?)
     prompt_lengths = [e.system_prompt_length for e in entries_with_prompt]
