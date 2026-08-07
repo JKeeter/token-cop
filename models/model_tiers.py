@@ -12,33 +12,24 @@ class TierResult:
     confidence: float
     signals: dict = field(default_factory=dict)
 
+# Tier metadata (models + cost ranges) used by recommend_model and cost
+# comparison. Task keywords live in _WEIGHTED_SIGNALS below — the single source
+# of truth for classification — not here.
 TIERS = {
     "reasoning": {
         "description": "Complex analysis, architecture, multi-step planning, subtle debugging",
         "models": ["claude-opus-4.6", "claude-opus-4", "o1"],
         "cost_range": "$15-75/M tokens",
-        "signals": [
-            "architect", "design", "analyze complex", "trade-off", "debug subtle",
-            "plan", "evaluate", "compare approaches", "reason about",
-        ],
     },
     "execution": {
         "description": "Code generation, data processing, standard implementation tasks",
         "models": ["claude-sonnet-4.6", "claude-sonnet-4", "gpt-4o"],
         "cost_range": "$2.50-15/M tokens",
-        "signals": [
-            "implement", "write code", "generate", "convert", "process",
-            "build", "create", "refactor", "migrate",
-        ],
     },
     "polish": {
         "description": "Formatting, summarizing, simple Q&A, proofreading",
         "models": ["claude-haiku-4.5", "gpt-4o-mini", "amazon-nova-lite"],
         "cost_range": "$0.06-4/M tokens",
-        "signals": [
-            "format", "summarize", "proofread", "clean up", "rename",
-            "translate", "reword", "fix typo", "lint",
-        ],
     },
 }
 
@@ -132,6 +123,10 @@ def _finalize(scores: dict) -> TierResult:
 
     confidence = winner_score / total
     # Low margin still returns the tier, but confidence reflects the closeness.
+    # The cap is deliberately just below the invocation-log mismatch gate
+    # (tools.invocation_logs.CONF_THRESHOLD = 0.5), so a low-margin ("flagged")
+    # classification is always excluded from mismatch stats. Keep 0.49 < that
+    # threshold if either value changes.
     if (winner_score - runner_score) / total < MARGIN:
         confidence = min(confidence, 0.49)  # flag as low-confidence
     return TierResult(winner, round(confidence, 3), floored)
