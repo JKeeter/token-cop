@@ -1,6 +1,5 @@
 """Model tier definitions and task classification for cost-effective routing."""
 
-import re
 from dataclasses import dataclass, field
 
 from models.pricing import PRICING_PER_MILLION
@@ -41,12 +40,6 @@ TIERS = {
             "translate", "reword", "fix typo", "lint",
         ],
     },
-}
-
-# Precompile signal patterns for each tier
-_TIER_PATTERNS = {
-    tier: re.compile("|".join(re.escape(s) for s in info["signals"]), re.IGNORECASE)
-    for tier, info in TIERS.items()
 }
 
 # Map model names to their tier
@@ -168,28 +161,6 @@ def classify_task(
     for tier in scores:
         scores[tier] += structural[tier]
     return _finalize(scores)
-
-
-def _classify_task_legacy(description: str) -> str:
-    """Legacy classifier using regex pattern matching on signal counts.
-
-    This is the original implementation and is preserved for backward compatibility
-    until the new weighted text scoring classifier is fully integrated.
-
-    Returns one of: "reasoning", "execution", "polish".
-    Defaults to "execution" if no signals match.
-    """
-    description_lower = description.lower()
-
-    # Count signal matches per tier
-    scores = {}
-    for tier, pattern in _TIER_PATTERNS.items():
-        scores[tier] = len(pattern.findall(description_lower))
-
-    best_tier = max(scores, key=scores.get)
-    if scores[best_tier] == 0:
-        return "execution"  # sensible default
-    return best_tier
 
 
 def get_model_tier(model_name: str) -> str | None:

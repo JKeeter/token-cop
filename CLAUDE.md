@@ -47,11 +47,15 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Requires Bedrock model invocation logging enabled to S3
 - Config: `BEDROCK_LOG_BUCKET` env var or SSM `/token-cop/bedrock-log-bucket`
 - Config: `BEDROCK_LOG_PREFIX` env var or SSM `/token-cop/bedrock-log-prefix` (default: `AWSLogs`)
-- S3 path pattern: `{prefix}/{accountId}/BedrockModelInvocationLogs/YYYY/MM/DD/`
-- Logs are gzipped JSON files with batches of invocation records
-- Sampling: stratified random across days, default 300 entries max
+- S3 path pattern: `{prefix}/{accountId}/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/HH/` (account + region segments; lister discovers account prefix via trailing-slash `CommonPrefixes` once, applies across all days)
+- Logs are gzipped JSON files with batches of invocation records; token counts nest under `input.inputTokenCount`/`output.outputTokenCount` (top-level fallback for legacy)
+- Large prompts are offloaded to `input.inputBodyS3Path`; fetched (capped at `BODY_FETCH_CAP=300`) to recover message text + structural signals
+- Sampling: stratified random across days, default 300 entries max; dollar figures scaled to population via `population_scale = total_objects / sampled_objects`
 - 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead
 - Context overhead dimension measures actual MCP tool schemas, skills, plugins, CLAUDE.md in system prompts (complements context_audit static estimates)
+- Model-task mismatch uses `classify_task` (weighted keyword scoring + structural signals) with a confidence gate: `unknown`/low-confidence (`< CONF_THRESHOLD=0.5`) entries are excluded, not guessed
+- Classification uses EFFECTIVE input size (`inputTokenCount + cacheRead + cacheWrite`) — raw `inputTokenCount` is only the uncached delta on cached traffic; size + message_count nudges only AMPLIFY a text signal (never create a verdict alone), since large cached context is the norm
+- Classifier tuned against real logs via `scripts/compare_classifier.py`; regression fixture `tests/fixtures/invocation_log_sample.json` (anonymized — account IDs scrubbed from ARNs)
 - Log records now carry `iam_principal` + `inference_profile` fields extracted by `tools/invocation_logs.py` (post-April 2026)
 - IAM needs: `s3:ListBucket` + `s3:GetObject` on the log bucket
 
@@ -75,6 +79,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - All providers normalize to `TokenUsageRecord` dataclass
 - Model names normalized via `models/normalization.py` aliases
 - Costs estimated via `models/pricing.py` lookup table
+- `classify_task` (`models/model_tiers.py`) returns a `TierResult` (tier/confidence/signals); tier may be `"unknown"`. Structural signals (input size, code, message count) are optional kwargs — supplied by the invocation-log path, omitted by `recommend_model`
 - Today's date injected into system prompt (LLM doesn't know current date)
 - Date parsing uses dateutil for robustness (LLM may pass non-YYYY-MM-DD)
 - Each tool wrapped in OTEL span for latency/error tracking

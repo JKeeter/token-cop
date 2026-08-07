@@ -325,5 +325,50 @@ class MultiMessageTextTests(unittest.TestCase):
         self.assertIn("continue", sig["combined_user_text"])
 
 
+class FrozenFixtureRegressionTests(unittest.TestCase):
+    """Regression guard: classify anonymized real log entries to a stable
+    distribution. Drift (e.g. everything → unknown, or confident-wrong
+    reasoning creeping back) fails here."""
+
+    def _load(self):
+        from collections import Counter
+        from models.model_tiers import classify_task
+
+        path = os.path.join(FIXTURE_DIR, "invocation_log_sample.json")
+        if not os.path.exists(path):
+            self.skipTest("fixture not captured yet")
+        with open(path) as f:
+            frozen = json.load(f)
+        tiers = Counter()
+        for rec in frozen:
+            r = classify_task(
+                rec["user_message_text"],
+                input_tokens=rec["input_token_count"],
+                has_code="```" in rec["user_message_text"],
+                message_count=rec["message_count"],
+            )
+            tiers[r.tier] += 1
+        return frozen, tiers
+
+    def test_not_everything_unknown(self):
+        # The classifier must confidently classify at least some real entries —
+        # guards against an over-strict regression where everything abstains.
+        frozen, tiers = self._load()
+        confident = sum(v for k, v in tiers.items() if k != "unknown")
+        self.assertGreater(confident, 0)
+
+    def test_fixture_is_anonymized(self):
+        # Belt-and-suspenders: no 12-digit AWS account IDs in the committed
+        # fixture (they would otherwise leak via inference-profile ARNs).
+        import re
+        path = os.path.join(FIXTURE_DIR, "invocation_log_sample.json")
+        if not os.path.exists(path):
+            self.skipTest("fixture not captured yet")
+        with open(path) as f:
+            raw = f.read()
+        self.assertIsNone(re.search(r"\b\d{12}\b", raw),
+                          "fixture contains a bare 12-digit AWS account ID")
+
+
 if __name__ == "__main__":
     unittest.main()
