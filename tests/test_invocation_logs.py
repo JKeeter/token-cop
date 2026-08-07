@@ -8,10 +8,14 @@ report dollar/percent figures, so their arithmetic needs to be exact.
 import unittest
 
 from models.schemas import InvocationLogEntry
+from unittest.mock import MagicMock
+
 from tools.invocation_logs import (
     _analyze_caching_opportunities,
     _analyze_context_overhead,
     _analyze_model_task_mismatch,
+    _list_log_objects,
+    _parse_record,
 )
 
 
@@ -158,6 +162,38 @@ class ContextOverheadClampTests(unittest.TestCase):
         self.assertGreaterEqual(
             result["breakdown"]["core_system_prompt"]["est_tokens"], 0
         )
+
+
+class ParserFidelityTests(unittest.TestCase):
+    def test_reads_nested_input_token_count(self):
+        record = {
+            "modelId": "us.anthropic.claude-opus-4-6-v1:0",
+            "timestamp": "2026-04-03T20:03:49Z",
+            "input": {
+                "inputTokenCount": 12345,
+                "inputBodyS3Path": "s3://x/y_input.json.gz",
+            },
+            "output": {"outputTokenCount": 678},
+        }
+        entry = _parse_record(record)
+        self.assertEqual(entry.input_token_count, 12345)
+        self.assertEqual(entry.output_token_count, 678)
+
+
+class RegionAwareListingTests(unittest.TestCase):
+    def test_region_partitioned_prefix_is_tried(self):
+        s3 = MagicMock()
+        paginator = MagicMock()
+        s3.get_paginator.return_value = paginator
+        # Return one object only for the region-partitioned prefix.
+        def paginate(Bucket, Prefix, MaxKeys):
+            if "us-east-1" in Prefix:
+                return [{"Contents": [{"Key": Prefix + "/f.json.gz", "Size": 10}]}]
+            return [{}]
+        paginator.paginate.side_effect = paginate
+        s3.list_objects_v2.return_value = {"CommonPrefixes": []}
+        objs = _list_log_objects(s3, "bucket", "AWSLogs", 1)
+        self.assertTrue(any("us-east-1" in o["Key"] for o in objs))
 
 
 if __name__ == "__main__":

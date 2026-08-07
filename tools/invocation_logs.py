@@ -153,11 +153,17 @@ def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
         date_suffix = day.strftime("%Y/%m/%d")
 
         paginator = s3.get_paginator("list_objects_v2")
-        # Try common prefix patterns
-        for pfx in [
-            f"{prefix}/BedrockModelInvocationLogs/{date_suffix}",
-            f"{prefix}/{date_suffix}",
-        ]:
+        # Common Bedrock CWL/S3 export prefix patterns. Region-partitioned
+        # paths (…/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/) are the
+        # current default; keep the older region-less patterns as fallback.
+        candidate_prefixes = []
+        for region in ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"):
+            candidate_prefixes.append(
+                f"{prefix}/BedrockModelInvocationLogs/{region}/{date_suffix}"
+            )
+        candidate_prefixes.append(f"{prefix}/BedrockModelInvocationLogs/{date_suffix}")
+        candidate_prefixes.append(f"{prefix}/{date_suffix}")
+        for pfx in candidate_prefixes:
             try:
                 for page in paginator.paginate(Bucket=bucket, Prefix=pfx, MaxKeys=1000):
                     for obj in page.get("Contents", []):
@@ -175,18 +181,18 @@ def _list_log_objects(s3, bucket: str, prefix: str, days: int) -> list[dict]:
         # Also try with account ID embedded in path
         if not objects and day_offset == 0:
             try:
-                # List top-level to discover account ID prefix
                 resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", MaxKeys=10)
                 for cp in resp.get("CommonPrefixes", []):
                     acct_prefix = cp["Prefix"]
-                    pfx = f"{acct_prefix}BedrockModelInvocationLogs/{date_suffix}"
-                    for page in paginator.paginate(Bucket=bucket, Prefix=pfx, MaxKeys=1000):
-                        for obj in page.get("Contents", []):
-                            objects.append({
-                                "Key": obj["Key"],
-                                "Size": obj.get("Size", 0),
-                                "date": day.strftime("%Y-%m-%d"),
-                            })
+                    for region in ("us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"):
+                        pfx = f"{acct_prefix}BedrockModelInvocationLogs/{region}/{date_suffix}"
+                        for page in paginator.paginate(Bucket=bucket, Prefix=pfx, MaxKeys=1000):
+                            for obj in page.get("Contents", []):
+                                objects.append({
+                                    "Key": obj["Key"],
+                                    "Size": obj.get("Size", 0),
+                                    "date": day.strftime("%Y-%m-%d"),
+                                })
             except Exception as exc:
                 logger.debug("S3 account prefix discovery failed: %s", exc)
 
@@ -255,20 +261,37 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
     normalized = normalize_model_name(model_id)
     timestamp = record.get("timestamp", "")
 
-    input_tokens = record.get("inputTokenCount", 0) or 0
-    output_tokens = record.get("outputTokenCount", 0) or 0
-
-    # Extract system prompt and user message from input
-    system_prompt_text = ""
-    user_message_text = ""
-    message_count = 0
-
     input_body = record.get("input", {})
     if isinstance(input_body, str):
         try:
             input_body = json.loads(input_body)
         except (json.JSONDecodeError, TypeError):
             input_body = {}
+
+    output_body = record.get("output", {})
+    if isinstance(output_body, str):
+        try:
+            output_body = json.loads(output_body)
+        except (json.JSONDecodeError, TypeError):
+            output_body = {}
+
+    # Token counts: prefer nested input/output bodies (current Bedrock schema),
+    # fall back to legacy top-level keys.
+    input_tokens = (
+        (input_body.get("inputTokenCount") if isinstance(input_body, dict) else None)
+        or record.get("inputTokenCount", 0)
+        or 0
+    )
+    output_tokens = (
+        (output_body.get("outputTokenCount") if isinstance(output_body, dict) else None)
+        or record.get("outputTokenCount", 0)
+        or 0
+    )
+
+    # Extract system prompt and user message from input
+    system_prompt_text = ""
+    user_message_text = ""
+    message_count = 0
 
     # Converse API format: {"messages": [...], "system": [...]}
     if "messages" in input_body:

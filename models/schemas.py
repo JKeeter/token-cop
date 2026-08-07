@@ -54,6 +54,7 @@ class InvocationLogEntry:
     message_count: int = 0
     classified_tier: str = ""
     model_tier: str = ""
+    classification_confidence: float = 0.0
     # AWS Bedrock granular cost attribution fields (April 17, 2026 feature).
     iam_principal: str = ""
     inference_profile_arn: str = ""
