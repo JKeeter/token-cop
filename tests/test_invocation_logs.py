@@ -5,6 +5,8 @@ context-overhead ratio clamp. These dimensions read real prompt payloads and
 report dollar/percent figures, so their arithmetic needs to be exact.
 """
 
+import json
+import os
 import unittest
 
 from models.schemas import InvocationLogEntry
@@ -14,9 +16,12 @@ from tools.invocation_logs import (
     _analyze_caching_opportunities,
     _analyze_context_overhead,
     _analyze_model_task_mismatch,
+    _extract_body_signals,
     _list_log_objects,
     _parse_record,
 )
+
+FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
 def _entry(**kwargs) -> InvocationLogEntry:
@@ -194,6 +199,16 @@ class RegionAwareListingTests(unittest.TestCase):
         s3.list_objects_v2.return_value = {"CommonPrefixes": []}
         objs = _list_log_objects(s3, "bucket", "AWSLogs", 1)
         self.assertTrue(any("us-east-1" in o["Key"] for o in objs))
+
+
+class BodySignalTests(unittest.TestCase):
+    def test_extracts_code_and_message_count(self):
+        with open(os.path.join(FIXTURE_DIR, "invocation_body_sample.json")) as f:
+            body = json.load(f)
+        sig = _extract_body_signals(body)
+        self.assertTrue(sig["has_code"])
+        self.assertEqual(sig["message_count"], 3)
+        self.assertEqual(sig["user_message_text"], "now add a test")
 
 
 if __name__ == "__main__":

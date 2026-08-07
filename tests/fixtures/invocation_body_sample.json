@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {"role": "user", "content": [{"text": "Please refactor this:\n```python\ndef f(): pass\n```"}]},
+    {"role": "assistant", "content": [{"text": "Done."}]},
+    {"role": "user", "content": [{"text": "now add a test"}]}
+  ],
+  "system": [{"text": "You are a coding assistant."}]
+}

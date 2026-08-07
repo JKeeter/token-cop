@@ -26,6 +26,55 @@ from models.schemas import InvocationLogEntry
 _SYSTEM_PROMPT_MAX = 8192  # 8KB — enough for context overhead pattern matching
 _USER_MESSAGE_MAX = 1024
 _RESPONSE_MAX = 512
+BODY_FETCH_CAP = 300  # max offloaded bodies to fetch per analysis run
+
+
+def _extract_body_signals(body: dict) -> dict:
+    """Derive classification signals from an offloaded request body."""
+    text = ""
+    message_count = 0
+    has_code = False
+    messages = body.get("messages", []) if isinstance(body, dict) else []
+    if isinstance(messages, list):
+        message_count = len(messages)
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and "text" in block:
+                            text = block["text"][:_USER_MESSAGE_MAX]
+                            break
+                elif isinstance(content, str):
+                    text = content[:_USER_MESSAGE_MAX]
+                break
+    # Code detection across all message text (fenced blocks or common tokens).
+    blob = json.dumps(body)[:20000]
+    if "```" in blob or "def " in blob or "function " in blob or "import " in blob:
+        has_code = True
+    return {"user_message_text": text, "message_count": message_count, "has_code": has_code}
+
+
+def _fetch_body(s3, bucket: str, s3_path: str) -> dict | None:
+    """Fetch and parse an offloaded inputBodyS3Path object. None on failure."""
+    if not s3_path:
+        return None
+    key = s3_path
+    if s3_path.startswith("s3://"):
+        # s3://bucket/key -> key
+        parts = s3_path[5:].split("/", 1)
+        key = parts[1] if len(parts) == 2 else ""
+    if not key:
+        return None
+    try:
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        raw = resp["Body"].read()
+        if key.endswith(".gz") or key.endswith(".gzip"):
+            raw = gzip.decompress(raw)
+        return json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        logger.debug("Body fetch failed for %s: %s", key, exc)
+        return None
 
 
 @tool
