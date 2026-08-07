@@ -75,3 +75,29 @@ class RecommendModelIntegrationTests(unittest.TestCase):
         out = json.loads(_recommend_model_impl("yes continue", ""))
         self.assertIn(out["recommended_tier"], ("execution", "unknown"))
         self.assertEqual(out["confidence"], 0.0)
+
+
+class MessageCountCorroborationTests(unittest.TestCase):
+    def test_long_convo_no_text_signal_is_not_reasoning(self):
+        # Deep in a long conversation but the turn itself has no task signal.
+        # message_count alone must NOT manufacture a confident reasoning verdict.
+        result = classify_task("install the tavily skills", message_count=25)
+        self.assertNotEqual(result.tier, "reasoning")
+
+    def test_long_convo_with_reasoning_text_stays_reasoning(self):
+        # Corroborated: a reasoning text signal is present, so message_count
+        # may reinforce reasoning.
+        result = classify_task("analyze the trade-off here", message_count=25)
+        self.assertEqual(result.tier, "reasoning")
+
+    def test_long_convo_with_large_input_corroborates(self):
+        # Large input corroborates; message_count bonus may apply.
+        result = classify_task("continue", message_count=25, input_tokens=60_000)
+        self.assertEqual(result.tier, "reasoning")
+
+    def test_message_count_alone_yields_unknown(self):
+        # No text, no size — only a long conversation. Honest unknown, not
+        # confident reasoning.
+        result = classify_task("ok thanks", message_count=25)
+        self.assertEqual(result.tier, "unknown")
+        self.assertEqual(result.confidence, 0.0)
