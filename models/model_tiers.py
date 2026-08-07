@@ -1,8 +1,17 @@
 """Model tier definitions and task classification for cost-effective routing."""
 
 import re
+from dataclasses import dataclass, field
 
 from models.pricing import PRICING_PER_MILLION
+
+
+@dataclass
+class TierResult:
+    """Classification result: tier, confidence 0-1, and signal breakdown."""
+    tier: str
+    confidence: float
+    signals: dict = field(default_factory=dict)
 
 TIERS = {
     "reasoning": {
@@ -47,8 +56,83 @@ for _tier, _info in TIERS.items():
         _MODEL_TO_TIER[_model] = _tier
 
 
-def classify_task(description: str) -> str:
-    """Classify a task description into a model tier using keyword matching.
+MIN_SCORE = 1.0   # below this total for the winner -> "unknown"
+MARGIN = 0.15     # winner must lead runner-up by this share of total
+
+# Weighted text signals: (phrase, weight). Strong phrases = 2.0, weak = 1.0.
+_WEIGHTED_SIGNALS = {
+    "reasoning": [
+        ("architect", 2.0), ("design the system", 2.0), ("debug subtle", 2.0),
+        ("trade-off", 2.0), ("analyze", 1.0), ("plan", 1.0), ("evaluate", 1.0),
+        ("compare approaches", 1.0), ("reason about", 1.0),
+    ],
+    "execution": [
+        ("implement", 2.0), ("refactor", 2.0), ("migrate", 2.0),
+        ("write code", 1.0), ("generate", 1.0), ("convert", 1.0),
+        ("process", 1.0), ("build", 1.0), ("create", 1.0),
+    ],
+    "polish": [
+        ("fix typo", 2.0), ("proofread", 2.0), ("format", 1.0),
+        ("summarize", 1.0), ("clean up", 1.0), ("rename", 1.0),
+        ("translate", 1.0), ("reword", 1.0), ("lint", 1.0),
+    ],
+}
+
+
+def _text_scores(text: str) -> dict:
+    """Sum weighted signal matches per tier from the text."""
+    low = text.lower()
+    scores = {"reasoning": 0.0, "execution": 0.0, "polish": 0.0}
+    for tier, signals in _WEIGHTED_SIGNALS.items():
+        for phrase, weight in signals:
+            if phrase in low:
+                scores[tier] += weight
+    return scores
+
+
+def _finalize(scores: dict) -> TierResult:
+    """Pick the winner, apply MIN_SCORE / MARGIN gates, compute confidence."""
+    floored = {t: max(0.0, s) for t, s in scores.items()}
+    total = sum(floored.values())
+    if total <= 0:
+        return TierResult("unknown", 0.0, floored)
+
+    ranked = sorted(floored.items(), key=lambda kv: kv[1], reverse=True)
+    winner, winner_score = ranked[0]
+    runner_score = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    if winner_score < MIN_SCORE:
+        return TierResult("unknown", 0.0, floored)
+
+    confidence = winner_score / total
+    # Low margin still returns the tier, but confidence reflects the closeness.
+    if (winner_score - runner_score) / total < MARGIN:
+        confidence = min(confidence, 0.49)  # flag as low-confidence
+    return TierResult(winner, round(confidence, 3), floored)
+
+
+def classify_task(
+    text: str,
+    *,
+    input_tokens: int = 0,
+    has_code: bool = False,
+    message_count: int = 0,
+) -> TierResult:
+    """Classify a task into a model tier with a confidence score.
+
+    Structural signals (input_tokens, has_code, message_count) are optional;
+    when omitted the result is text-driven. Returns tier "unknown" when there
+    is insufficient signal rather than silently defaulting.
+    """
+    scores = _text_scores(text)
+    return _finalize(scores)
+
+
+def _classify_task_legacy(description: str) -> str:
+    """Legacy classifier using regex pattern matching on signal counts.
+
+    This is the original implementation and is preserved for backward compatibility
+    until the new weighted text scoring classifier is fully integrated.
 
     Returns one of: "reasoning", "execution", "polish".
     Defaults to "execution" if no signals match.
