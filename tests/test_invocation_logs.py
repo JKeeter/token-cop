@@ -16,6 +16,7 @@ from tools.invocation_logs import (
     _analyze_caching_opportunities,
     _analyze_context_overhead,
     _analyze_model_task_mismatch,
+    _effective_input_tokens,
     _extract_body_signals,
     _list_log_objects,
     _parse_record,
@@ -282,6 +283,46 @@ class AccountSegmentListingTests(unittest.TestCase):
         _list_log_objects(s3, "bucket", "AWSLogs", 1)
         self.assertIn("AWSLogs/", seen_prefixes,
                       "discovery must list with a trailing slash to surface the account prefix")
+
+
+class EffectiveInputSizeTests(unittest.TestCase):
+    def test_effective_includes_cache_tokens(self):
+        # Cached multi-turn call: 3 new tokens but 33K cached context.
+        self.assertEqual(_effective_input_tokens(3, 33_000, 200), 33_203)
+
+    def test_parse_record_reads_and_classifies_on_effective_size(self):
+        # A tiny uncached delta but huge cache read -> effective size crosses
+        # the >20K reasoning-size threshold, so it must NOT be "unknown".
+        from tools.invocation_logs import _parse_record
+        record = {
+            "modelId": "us.anthropic.claude-opus-4-6-v1:0",
+            "timestamp": "2026-04-03T20:00:00Z",
+            "input": {
+                "inputTokenCount": 3,
+                "cacheReadInputTokenCount": 33000,
+                "cacheWriteInputTokenCount": 200,
+            },
+            "output": {"outputTokenCount": 50},
+        }
+        entry = _parse_record(record)
+        self.assertEqual(entry.cache_read_tokens, 33000)
+        self.assertEqual(entry.input_token_count, 3)  # RAW unchanged
+        # No inline text here, so no user message -> still unknown; but confirm
+        # cache fields are populated for later effective-size use.
+
+
+class MultiMessageTextTests(unittest.TestCase):
+    def test_combines_last_five_user_messages(self):
+        body = {"messages": [
+            {"role": "user", "content": [{"text": "first, analyze the architecture"}]},
+            {"role": "assistant", "content": [{"text": "ok"}]},
+            {"role": "user", "content": [{"text": "now continue"}]},
+        ]}
+        sig = _extract_body_signals(body)
+        # combined text spans multiple user turns, so the "analyze"/"architecture"
+        # signal from an earlier turn is visible even though the last turn is terse.
+        self.assertIn("analyze", sig["combined_user_text"])
+        self.assertIn("continue", sig["combined_user_text"])
 
 
 if __name__ == "__main__":

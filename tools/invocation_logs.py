@@ -53,11 +53,42 @@ def _extract_body_signals(body: dict) -> dict:
     blob = json.dumps(body)[:20000]
     if "```" in blob or "def " in blob or "function " in blob or "import " in blob:
         has_code = True
-    return {"user_message_text": text, "message_count": message_count, "has_code": has_code}
+
+    # Combined text from the last up-to-5 user messages, so a task signal in a
+    # recent-but-not-last turn is still visible when the final turn is terse.
+    combined_parts = []
+    if isinstance(messages, list):
+        user_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "user"]
+        for msg in user_msgs[-5:]:
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and "text" in block:
+                        combined_parts.append(block["text"])
+                        break
+            elif isinstance(content, str):
+                combined_parts.append(content)
+    combined_user_text = "\n".join(combined_parts)[:_USER_MESSAGE_MAX * 5]
+    return {
+        "user_message_text": text,
+        "combined_user_text": combined_user_text,
+        "message_count": message_count,
+        "has_code": has_code,
+    }
 
 
 def _looks_like_code(text: str) -> bool:
     return "```" in text or "def " in text or "import " in text or "function " in text
+
+
+def _effective_input_tokens(input_tokens: int, cache_read: int, cache_write: int) -> int:
+    """Real context size seen by the model, including cached tokens.
+
+    With prompt caching, inputTokenCount is only the new uncached delta; the
+    bulk of the context is in the cache-read/write counts. Classification
+    signals that care about size must use this effective total.
+    """
+    return (input_tokens or 0) + (cache_read or 0) + (cache_write or 0)
 
 
 def _offloaded_body_path(record: dict) -> str:
@@ -92,13 +123,16 @@ def _fetch_body(s3, bucket: str, s3_path: str) -> dict | None:
 def _enrich_entry(entry: InvocationLogEntry, body: dict) -> None:
     """Re-classify an entry using signals recovered from the offloaded body."""
     sig = _extract_body_signals(body)
-    if not sig["user_message_text"]:
+    text = sig["combined_user_text"] or sig["user_message_text"]
+    if not text:
         return
     entry.user_message_text = sig["user_message_text"]
     entry.message_count = sig["message_count"] or entry.message_count
     result = classify_task(
-        sig["user_message_text"],
-        input_tokens=entry.input_token_count,
+        text,
+        input_tokens=_effective_input_tokens(
+            entry.input_token_count, entry.cache_read_tokens, entry.cache_write_tokens
+        ),
         has_code=sig["has_code"],
         message_count=sig["message_count"],
     )
@@ -382,6 +416,15 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
         or 0
     )
 
+    cache_read = (
+        (input_body.get("cacheReadInputTokenCount") if isinstance(input_body, dict) else None)
+        or 0
+    )
+    cache_write = (
+        (input_body.get("cacheWriteInputTokenCount") if isinstance(input_body, dict) else None)
+        or 0
+    )
+
     # Extract system prompt and user message from input
     system_prompt_text = ""
     user_message_text = ""
@@ -440,7 +483,7 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
     if user_message_text:
         result = classify_task(
             user_message_text,
-            input_tokens=input_tokens,
+            input_tokens=_effective_input_tokens(input_tokens, cache_read, cache_write),
             has_code=_looks_like_code(user_message_text),
             message_count=message_count,
         )
@@ -483,6 +526,8 @@ def _parse_record(record: dict) -> InvocationLogEntry | None:
         timestamp=timestamp,
         input_token_count=input_tokens,
         output_token_count=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
         system_prompt_hash=sys_hash,
         system_prompt_length=sys_length,
         system_prompt_text=system_prompt_text,

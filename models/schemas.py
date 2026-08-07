@@ -47,6 +47,8 @@ class InvocationLogEntry:
     timestamp: str
     input_token_count: int = 0
     output_token_count: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     system_prompt_hash: str = ""
     system_prompt_length: int = 0
     system_prompt_text: str = ""
