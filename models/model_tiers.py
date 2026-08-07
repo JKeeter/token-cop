@@ -90,6 +90,23 @@ def _text_scores(text: str) -> dict:
     return scores
 
 
+def _structural_scores(input_tokens: int, has_code: bool, message_count: int) -> dict:
+    """Additive structural nudges. All zero when signals are absent."""
+    s = {"reasoning": 0.0, "execution": 0.0, "polish": 0.0}
+    if input_tokens > 50_000:
+        s["reasoning"] += 2.0
+        s["polish"] -= 3.0
+    elif input_tokens > 20_000:
+        s["reasoning"] += 1.0
+        s["execution"] += 1.0
+    if has_code:
+        s["execution"] += 1.5
+        s["polish"] -= 1.0
+    if message_count > 10:
+        s["reasoning"] += 1.0
+    return s
+
+
 def _finalize(scores: dict) -> TierResult:
     """Pick the winner, apply MIN_SCORE / MARGIN gates, compute confidence."""
     floored = {t: max(0.0, s) for t, s in scores.items()}
@@ -125,6 +142,9 @@ def classify_task(
     is insufficient signal rather than silently defaulting.
     """
     scores = _text_scores(text)
+    structural = _structural_scores(input_tokens, has_code, message_count)
+    for tier in scores:
+        scores[tier] += structural[tier]
     return _finalize(scores)
 
 
