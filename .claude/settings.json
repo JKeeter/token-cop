@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/check_heavy_file.py"
+            "command": "python3 scripts/check_heavy_file.py"
           }
         ]
       }
