@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from strands import Agent
 from strands.models import BedrockModel
@@ -55,6 +55,11 @@ Formatting rules:
 IMPORTANT: Never include API keys, secrets, or AWS credentials in your responses. \
 If a tool returns data containing keys, omit them from your output.
 
+IMPORTANT: Every usage number, token count, and cost you report MUST come from a tool \
+result in this conversation. If a tool is unavailable, denied, or returns an error, say \
+exactly that and stop. Never estimate, illustrate, or invent usage figures, and never \
+write example tool calls or sample results.
+
 Token Efficiency Advisor:
 When presenting usage data, proactively surface efficiency insights based on these principles:
 
@@ -92,29 +97,46 @@ Available providers: AWS Bedrock, OpenRouter, OpenAI
 """
 
 
-def create_agent() -> Agent:
-    """Create the Token Cop agent with Bedrock model and usage tools."""
-    from datetime import timedelta
+# The canonical tool list. Shared by the in-process Strands agent (AgentCore
+# Runtime) and by the Gateway Lambda target that fronts the same tools for the
+# AgentCore harness twin (scripts/lambda/tool_dispatch.py). Keep it the single
+# source of truth so the two chassis can never drift.
+TOKEN_COP_TOOLS = [
+    bedrock_usage, openrouter_usage, openai_usage,
+    aggregate_usage, save_snapshot, search_history, check_budget,
+    recommend_model, analyze_invocation_logs, attribution_breakdown,
+    enforcement_status, set_principal_budget, list_denied_principals,
+]
 
-    init_tracing()
-    today = date.today()
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+
+def build_system_prompt(today: date | None = None) -> str:
+    """Render the system prompt for a given "today".
+
+    The harness has no server-side templating, so callers on that path
+    (mcp_server.py, scripts/harness_demo.py) render this per invocation and
+    pass it as a ``systemPrompt`` override. The runtime path renders it once
+    per agent in ``create_agent``.
+    """
+    today = today or date.today()
+    return SYSTEM_PROMPT_TEMPLATE.format(
         today=today.isoformat(),
         thirty_days_ago=(today - timedelta(days=30)).isoformat(),
     )
 
+
+def create_agent() -> Agent:
+    """Create the Token Cop agent with Bedrock model and usage tools."""
+    init_tracing()
+
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id=MODEL_ID,
         streaming=True,
     )
 
     return Agent(
         model=model,
-        system_prompt=system_prompt,
-        tools=[
-            bedrock_usage, openrouter_usage, openai_usage,
-            aggregate_usage, save_snapshot, search_history, check_budget,
-            recommend_model, analyze_invocation_logs, attribution_breakdown,
-            enforcement_status, set_principal_budget, list_denied_principals,
-        ],
+        system_prompt=build_system_prompt(),
+        tools=list(TOKEN_COP_TOOLS),
     )

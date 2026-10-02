@@ -32,6 +32,16 @@ Claude Code ──stdio──> mcp_server.py ──SigV4/boto3──> AgentCore 
 
 Set `TOKEN_COP_BACKEND=direct` to skip the gateway and call the runtime directly via IAM.
 
+### Alternate: Harness Mode
+
+```
+Claude Code ──stdio──> mcp_server.py ──SigV4/boto3──> AgentCore Harness ──OAuth──> MCP Gateway ──> Lambda token-cop-tools
+```
+
+Set `TOKEN_COP_BACKEND=harness` to call the managed harness twin. The harness reaches the
+**same gateway** through an OAuth2 credential provider (`token-cop-cognito`, Cognito
+`client_credentials`), so Cedar policies apply to it too. See `docs/harness.md`.
+
 ## Token Refresh
 
 Cognito tokens from the `client_credentials` OAuth flow expire after 1 hour (3600s).
@@ -89,7 +99,9 @@ Each new Claude Code session starts fresh — no stale tokens persist on disk.
 |----------|-----------|
 | MCP Gateway | `token-cop-gateway-7q9nodpeem` |
 | Gateway URL | `https://token-cop-gateway-7q9nodpeem.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp` |
-| Gateway Target | `token-cop-target` (ID: `FHE3QYCIBG`) |
+| Gateway Target | `token-cop-target` (ID: `FHE3QYCIBG`) — proxies to the runtime agent |
+| Gateway Target | `token-cop-tools` — 13 Token Cop tools in Lambda `token-cop-tools` (harness twin; `scripts/setup_harness.py`) |
+| OAuth2 Credential Provider | `token-cop-cognito` — harness → gateway auth |
 | Lambda | `token-cop-gateway-handler` |
 | Lambda Role | `token-cop-gateway-lambda-role` |
 | Gateway Role | `AgentCoreGatewayExecutionRole` |

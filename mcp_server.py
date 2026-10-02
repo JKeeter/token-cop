@@ -1,8 +1,14 @@
 """MCP Server for Token Cop - exposes the deployed AgentCore agent as a tool in Claude Code.
 
-Supports two backends (set TOKEN_COP_BACKEND env var):
+Supports three backends (set TOKEN_COP_BACKEND env var):
   - "gateway" (default): Calls the MCP Gateway with Cognito JWT auth
-  - "direct": Calls the AgentCore Runtime directly via boto3/IAM
+  - "harness": Calls the managed AgentCore *harness* twin via InvokeHarness
+    (boto3/IAM). One runtimeSessionId is kept per MCP server process so
+    consecutive /tokcop calls share conversation context; set
+    TOKEN_COP_HARNESS_FRESH_SESSION=1 for a new session on every call.
+  - anything else (e.g. "direct"): Calls the AgentCore Runtime directly via boto3/IAM
+
+The ``token_cop`` tool also accepts a per-call ``backend`` override.
 """
 import json
 import os
@@ -19,6 +25,7 @@ REGION = "us-east-1"
 COGNITO_SCOPE = "token-cop-gateway/invoke"
 
 BACKEND = os.environ.get("TOKEN_COP_BACKEND", "gateway")
+BACKENDS = ("gateway", "harness", "direct")
 
 # Token cache
 _token: str | None = None
@@ -26,6 +33,9 @@ _token_expires_at: float = 0
 
 # SSM-loaded config cache
 _ssm_config: dict[str, str] = {}
+
+# Harness conversation session (one per MCP server process, created lazily)
+_harness_session_id: str | None = None
 
 
 def _get_ssm_param(name: str) -> str:
@@ -128,34 +138,117 @@ def _call_via_gateway(prompt: str) -> str:
 
 
 def _call_direct(prompt: str) -> str:
-    """Call the AgentCore Runtime directly via boto3/IAM."""
+    """Call the AgentCore Runtime directly via boto3/IAM.
+
+    ``invoke_agent_runtime`` returns the agent's payload under the ``response``
+    key (a streaming body). BedrockAgentCoreApp JSON-encodes the entrypoint's
+    return value, so a plain-string answer arrives as a JSON string; SSE
+    streaming responses arrive as ``data: ...`` lines.
+    """
+    import uuid
+
     client = boto3.client("bedrock-agentcore", region_name=REGION)
 
     response = client.invoke_agent_runtime(
         agentRuntimeArn=_get_agent_arn(),
+        runtimeSessionId=str(uuid.uuid4()),
         payload=json.dumps({"prompt": prompt}),
     )
 
-    chunks = []
-    for event in response.get("body", response.get("output", [])):
-        if "chunk" in event:
-            chunk_data = event["chunk"]
-            if "bytes" in chunk_data:
-                chunks.append(chunk_data["bytes"].decode("utf-8"))
-            elif "text" in chunk_data:
-                chunks.append(chunk_data["text"])
-        elif isinstance(event, bytes):
-            chunks.append(event.decode("utf-8"))
+    body = response.get("response")
+    content_type = response.get("contentType", "") or ""
+    if body is None:
+        return "No response received from Token Cop agent."
 
-    if not chunks:
-        body = response.get("body")
-        if body and hasattr(body, "read"):
-            raw = body.read()
-            chunks.append(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
-        elif isinstance(body, str):
-            chunks.append(body)
+    if "text/event-stream" in content_type:
+        chunks = []
+        for line in body.iter_lines():
+            if not line:
+                continue
+            text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+            if text.startswith("data: "):
+                text = text[len("data: "):]
+            chunks.append(_decode_agent_payload(text))
+        return "".join(chunks) or "No response received from Token Cop agent."
 
-    return "".join(chunks) if chunks else "No response received from Token Cop agent."
+    raw = body.read()
+    text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    return _decode_agent_payload(text) or "No response received from Token Cop agent."
+
+
+def _decode_agent_payload(text: str) -> str:
+    """Unwrap the JSON the runtime wraps around the entrypoint's return value."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        for key in ("result", "response", "output", "text"):
+            if isinstance(data.get(key), str):
+                return data[key]
+    return json.dumps(data)
+
+
+def _harness_session() -> str:
+    """Return the per-process harness session id (or a fresh one if requested)."""
+    global _harness_session_id
+    from agent.harness_client import new_session_id
+
+    if os.environ.get("TOKEN_COP_HARNESS_FRESH_SESSION") == "1":
+        return new_session_id()
+    if _harness_session_id is None:
+        _harness_session_id = new_session_id()
+    return _harness_session_id
+
+
+def _call_via_harness(prompt: str) -> str:
+    """Call the managed AgentCore harness twin via InvokeHarness (boto3/IAM).
+
+    The runtime container scrubs its own output server-side; the harness has
+    no hook for that, so the answer is scrubbed here before it reaches Claude
+    Code. A one-line usage footer is appended: Token Cop reporting on itself.
+    """
+    # Lazy so the gateway/direct paths never import agent code (Strands etc.).
+    from agent.guardrails import scrub_response
+    from agent.harness_client import invoke
+
+    try:
+        result = invoke(prompt, session_id=_harness_session())
+    except (RuntimeError, ValueError) as exc:
+        return f"Harness error: {exc}"
+
+    text = scrub_response(result.text) or "No response received from Token Cop harness."
+    if result.fabrication_warning:
+        text = (
+            "**WARNING — unverified answer.** " + result.fabrication_warning + ". "
+            "Token Cop only trusts figures that come from a tool result; check gateway "
+            "access and Cedar policy mode (`python -m scripts.setup_policies --status`).\n\n" + text
+        )
+    return text + "\n\n_" + result.usage_footer() + "_"
+
+
+def _select_backend(override: str = "", default: str | None = None) -> str:
+    """Resolve which backend to use.
+
+    ``override`` (per-call argument) wins when non-empty; otherwise the
+    module-level ``BACKEND`` (from ``TOKEN_COP_BACKEND``). ``gateway`` and
+    ``harness`` are matched exactly (case-insensitive, whitespace-trimmed);
+    anything else falls back to ``direct`` — preserving the historical
+    behaviour where any unrecognised value meant the direct runtime path.
+    """
+    name = (override or (default if default is not None else BACKEND) or "").strip().lower()
+    if name in ("gateway", "harness"):
+        return name
+    return "direct"
+
+
+_BACKEND_CALLS = {
+    "gateway": _call_via_gateway,
+    "harness": _call_via_harness,
+    "direct": _call_direct,
+}
 
 
 @mcp.tool()
@@ -182,7 +275,7 @@ def token_cop_context_audit(project_dir: str = ".") -> str:
 
 
 @mcp.tool()
-def token_cop(prompt: str) -> str:
+def token_cop(prompt: str, backend: str = "") -> str:
     """Query Token Cop for LLM token usage across AWS Bedrock, OpenRouter, and OpenAI.
 
     Ask about token usage, costs, budgets, and trends across providers.
@@ -195,10 +288,12 @@ def token_cop(prompt: str) -> str:
 
     Args:
         prompt: Your question about token usage.
+        backend: Optional per-call override: "gateway" (MCP Gateway + JWT),
+            "harness" (managed AgentCore harness twin), or "direct"
+            (AgentCore Runtime via IAM). Empty uses the TOKEN_COP_BACKEND
+            env default (gateway).
     """
-    if BACKEND == "gateway":
-        return _call_via_gateway(prompt)
-    return _call_direct(prompt)
+    return _BACKEND_CALLS[_select_backend(backend)](prompt)
 
 
 if __name__ == "__main__":
