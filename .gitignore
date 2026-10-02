@@ -3,3 +3,18 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# local tool state
+.playwright-mcp/
+.protoshield/
+
+# session scratch (screenshots, notes, one-off reports)
+# tracked files (dashboard-01/05/07, token-cop-github-qr.png) are unaffected
+Untitled*
+<notes>.md
+transcript.md
+qa-report-*.md
+mcp-architecture.png
+dashboard-*.png
+scripts/build_isv_research_pdf.py
+docs/superpowers/
