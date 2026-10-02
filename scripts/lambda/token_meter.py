@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import os
+import re
 from decimal import Decimal
 
 import boto3
@@ -37,25 +38,33 @@ iam = boto3.client("iam")
 
 # Pricing per 1M tokens, mirroring models/pricing.py. Kept inline so the
 # Lambda has no Token Cop package dependency. Update both when prices change.
+# (input, output, cache_read, cache_write)
 PRICING = {
-    "claude-opus-4.7": (5.00, 25.00),
-    "claude-opus-4.6": (5.00, 25.00),
-    "claude-sonnet-4.6": (3.00, 15.00),
-    "claude-sonnet-4.5": (3.00, 15.00),
-    "claude-haiku-4.5": (1.00, 5.00),
-    "claude-opus-4": (15.00, 75.00),
-    "claude-sonnet-4": (3.00, 15.00),
-    "claude-3.5-sonnet": (3.00, 15.00),
-    "claude-3.5-haiku": (0.80, 4.00),
-    "claude-3-opus": (15.00, 75.00),
-    "amazon-nova-pro": (0.80, 3.20),
-    "amazon-nova-lite": (0.06, 0.24),
-    "amazon-nova-micro": (0.035, 0.14),
-    "llama-3.1-405b": (5.32, 16.00),
-    "llama-3.1-70b": (0.72, 0.72),
-    "llama-3.1-8b": (0.22, 0.22),
+    "claude-fable-5.1": (10.00, 50.00, 0.25, 12.50),
+    "claude-fable-5": (10.00, 50.00, 1.00, 12.50),
+    "claude-opus-5.5": (4.00, 20.00, 0.20, 5.00),
+    "claude-opus-5": (5.00, 25.00, 0.50, 6.25),
+    "claude-opus-4.8": (5.00, 25.00, 0.50, 6.25),
+    "claude-sonnet-5.5": (2.00, 10.00, 0.20, 2.50),
+    "claude-sonnet-5": (2.00, 10.00, 0.20, 2.50),
+    "claude-opus-4.7": (5.00, 25.00, 0.50, 6.25),
+    "claude-opus-4.6": (5.00, 25.00, 0.50, 6.25),
+    "claude-sonnet-4.6": (3.00, 15.00, 0.30, 3.75),
+    "claude-sonnet-4.5": (3.00, 15.00, 0.30, 3.75),
+    "claude-haiku-4.5": (1.00, 5.00, 0.10, 1.25),
+    "claude-opus-4": (15.00, 75.00, 1.50, 18.75),
+    "claude-sonnet-4": (3.00, 15.00, 0.30, 3.75),
+    "claude-3.5-sonnet": (3.00, 15.00, 0.30, 3.75),
+    "claude-3.5-haiku": (0.80, 4.00, 0.08, 1.00),
+    "claude-3-opus": (15.00, 75.00, 1.50, 18.75),
+    "amazon-nova-pro": (0.80, 3.20, 0.80, 0.80),
+    "amazon-nova-lite": (0.06, 0.24, 0.06, 0.06),
+    "amazon-nova-micro": (0.035, 0.14, 0.035, 0.035),
+    "llama-3.1-405b": (5.32, 16.00, 5.32, 5.32),
+    "llama-3.1-70b": (0.72, 0.72, 0.72, 0.72),
+    "llama-3.1-8b": (0.22, 0.22, 0.22, 0.22),
 }
-DEFAULT_PRICING = (1.00, 3.00)
+DEFAULT_PRICING = (1.00, 3.00, 1.00, 1.00)
 
 
 def _normalize_model(model_id: str) -> str:
@@ -64,7 +73,7 @@ def _normalize_model(model_id: str) -> str:
         return ""
     m = model_id.lower()
     # Strip Bedrock cross-region prefix and provider segment.
-    for prefix in ("us.", "eu.", "apac."):
+    for prefix in ("us.", "eu.", "jp.", "au.", "apac.", "global."):
         if m.startswith(prefix):
             m = m[len(prefix):]
             break
@@ -76,12 +85,15 @@ def _normalize_model(model_id: str) -> str:
         if idx != -1:
             m = m[:idx]
             break
-    return m
+    # Bedrock IDs use hyphens ("opus-4-7"); pricing keys use dots ("opus-4.7").
+    return re.sub(r"(\d)-(\d)", r"\1.\2", m)
 
 
-def _cost(model_id: str, in_tok: int, out_tok: int) -> float:
-    pricing = PRICING.get(_normalize_model(model_id), DEFAULT_PRICING)
-    return (in_tok * pricing[0] + out_tok * pricing[1]) / 1_000_000
+def _cost(model_id: str, in_tok: int, out_tok: int,
+          cache_read: int = 0, cache_write: int = 0) -> float:
+    p = PRICING.get(_normalize_model(model_id), DEFAULT_PRICING)
+    return (in_tok * p[0] + out_tok * p[1]
+            + cache_read * p[2] + cache_write * p[3]) / 1_000_000
 
 
 def _month_key(timestamp: str) -> str:
@@ -164,13 +176,20 @@ def _process_record(record: dict):
     if not arn:
         return  # No principal → skip silently. Token Cop reports attribution coverage separately.
 
-    in_tok = int(record.get("inputTokenCount") or 0)
-    out_tok = int(record.get("outputTokenCount") or 0)
-    if in_tok == 0 and out_tok == 0:
+    # Current schema nests counts under input/output; fall back to legacy
+    # top-level keys. On cached traffic inputTokenCount is only the uncached
+    # delta, so the cache counts carry most of the cost.
+    inp = record.get("input") if isinstance(record.get("input"), dict) else {}
+    out = record.get("output") if isinstance(record.get("output"), dict) else {}
+    in_tok = int(inp.get("inputTokenCount") or record.get("inputTokenCount") or 0)
+    out_tok = int(out.get("outputTokenCount") or record.get("outputTokenCount") or 0)
+    cr_tok = int(inp.get("cacheReadInputTokenCount") or 0)
+    cw_tok = int(inp.get("cacheWriteInputTokenCount") or 0)
+    if not (in_tok or out_tok or cr_tok or cw_tok):
         return
 
     model = record.get("modelId") or ""
-    cost = _cost(model, in_tok, out_tok)
+    cost = _cost(model, in_tok, out_tok, cr_tok, cw_tok)
     month = _month_key(record.get("timestamp", ""))
 
     # Atomic increment. Returns the new totals so we can budget-check
@@ -178,11 +197,14 @@ def _process_record(record: dict):
     resp = ddb.update_item(
         Key={"principal_arn": arn, "sk": month},
         UpdateExpression=(
-            "ADD tokens_in :i, tokens_out :o, cost_usd :c, calls :one"
+            "ADD tokens_in :i, tokens_out :o, tokens_cache_read :cr, "
+            "tokens_cache_write :cw, cost_usd :c, calls :one"
         ),
         ExpressionAttributeValues={
             ":i": in_tok,
             ":o": out_tok,
+            ":cr": cr_tok,
+            ":cw": cw_tok,
             ":c": Decimal(str(round(cost, 6))),
             ":one": 1,
         },

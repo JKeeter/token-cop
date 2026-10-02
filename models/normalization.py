@@ -60,6 +60,22 @@ MODEL_ALIASES = {
     "gpt-4-turbo-2024-04-09": "gpt-4-turbo",
 }
 
+# Claude 5-era IDs carry no date/version suffix, so register every Bedrock
+# cross-Region prefix plus the bare first-party ID. Longer IDs are listed
+# first so the substring fallback never maps claude-fable-5-1 to claude-fable-5.
+for _model_id, _normalized in (
+    ("claude-fable-5-1", "claude-fable-5.1"),
+    ("claude-fable-5", "claude-fable-5"),
+    ("claude-opus-5-5", "claude-opus-5.5"),
+    ("claude-opus-5", "claude-opus-5"),
+    ("claude-opus-4-8", "claude-opus-4.8"),
+    ("claude-sonnet-5-5", "claude-sonnet-5.5"),
+    ("claude-sonnet-5", "claude-sonnet-5"),
+):
+    MODEL_ALIASES[_model_id] = _normalized
+    for _prefix in ("", "us.", "eu.", "jp.", "au.", "apac.", "global."):
+        MODEL_ALIASES[f"{_prefix}anthropic.{_model_id}"] = _normalized
+
 
 def normalize_model_name(raw_model_id: str) -> str:
     """Normalize a provider-specific model ID to a canonical name."""

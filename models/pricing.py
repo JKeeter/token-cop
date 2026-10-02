@@ -1,9 +1,18 @@
 # Pricing per 1M tokens (USD) - update as prices change
-# Source: provider pricing pages as of May 2026
+# Source: provider pricing pages as of May 2026; Claude 5-era rows added Oct 2026
+# from Anthropic list rates. Bedrock bills these at list rates on global
+# cross-Region profiles; geo (us./eu./...) profiles run ~10% higher.
 # Cache write pricing uses the 5-minute write rate. CloudWatch token metrics do
 # not expose the cache TTL, so 1-hour cache writes need billing data for exacts.
 PRICING_PER_MILLION = {
     # Anthropic models
+    "claude-fable-5.1": {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.50},
+    "claude-fable-5": {"input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50},
+    "claude-opus-5.5": {"input": 4.00, "output": 20.00, "cache_read": 0.20, "cache_write": 5.00},
+    "claude-opus-5": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
+    "claude-opus-4.8": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
+    "claude-sonnet-5.5": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50},
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50},
     "claude-opus-4.7": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "claude-opus-4.6": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "claude-sonnet-4.6": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
