@@ -26,6 +26,23 @@ tag, usage type, or linked account — no S3/Athena pipeline required.
 Reference: [Using IAM principal for cost allocation](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/iam-principal-cost-allocation.html)
 and [IAM principal attribution](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html).
 
+## Which Cost Explorer services count as "Bedrock"
+
+Third-party models are "offered and billed through AWS Marketplace. Charges
+appear on your AWS bill and in AWS Cost Explorer **under the model provider
+(not under Amazon Bedrock)**" (per the Bedrock model cards), so a naive
+`SERVICE = "Amazon Bedrock"` filter silently drops all Anthropic/Claude
+spend. `attribution_breakdown` therefore enumerates the account's SERVICE
+dimension values (`ce:GetDimensionValues`) and filters on every value
+matching *bedrock*, *claude*, or *anthropic* — e.g. `Amazon Bedrock`,
+`Amazon Bedrock Service`, `Amazon Bedrock AgentCore`, and provider listings
+like `Claude … (Amazon Bedrock Edition)`. The result reports the services it
+included (`services_included`) and adds a caveat when no model-provider
+service exists in the period — in some accounts (observed 2026-10-02)
+Marketplace model charges never post to Cost Explorer at all, and the only
+trustworthy spend signal is `bedrock_usage` (CloudWatch token metrics ×
+pricing table).
+
 ## How to Enable
 
 One helper script does the whole setup. Run it in the **payer account**

@@ -31,6 +31,60 @@ logger = logging.getLogger(__name__)
 _BEDROCK_SERVICE = "Amazon Bedrock"
 _DOCS_REF = "See docs/cost-attribution.md for setup instructions."
 
+# Third-party models (Anthropic Claude et al.) are "offered and billed through
+# AWS Marketplace. Charges appear on your AWS bill and in AWS Cost Explorer
+# under the model provider (not under Amazon Bedrock)" — Bedrock model cards.
+# A single SERVICE = "Amazon Bedrock" filter therefore silently drops their
+# spend, so the filter is built from every service value matching these hints
+# (covers "Amazon Bedrock Service", "Amazon Bedrock AgentCore", and
+# provider/marketplace listings like "... (Amazon Bedrock Edition)").
+_SERVICE_HINTS = ("bedrock", "claude", "anthropic")
+
+
+def _bedrock_service_values(ce, start_str: str, end_str: str) -> tuple[list[str], list[str]]:
+    """Discover the Cost Explorer SERVICE values carrying Bedrock-related cost.
+
+    Returns ``(service_values, caveats)``. Falls back to just
+    ``Amazon Bedrock`` if the dimension listing fails.
+    """
+    caveats: list[str] = []
+    values: list[str] = []
+    token = None
+    try:
+        while True:
+            kwargs = {
+                "TimePeriod": {"Start": start_str, "End": end_str},
+                "Dimension": "SERVICE",
+            }
+            if token:
+                kwargs["NextPageToken"] = token
+            resp = ce.get_dimension_values(**kwargs)
+            values += [v.get("Value", "") for v in resp.get("DimensionValues", [])]
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+    except ClientError:
+        caveats.append(
+            "Could not enumerate Cost Explorer services; filtering on "
+            "'Amazon Bedrock' only. Third-party model charges (e.g. Claude) "
+            "bill under the model provider's Marketplace service name and "
+            "may be missing from these totals."
+        )
+        return [_BEDROCK_SERVICE], caveats
+
+    hits = sorted({v for v in values if any(h in v.lower() for h in _SERVICE_HINTS)})
+    if _BEDROCK_SERVICE not in hits:
+        hits.append(_BEDROCK_SERVICE)
+    if not any(h in v.lower() for v in hits for h in ("claude", "anthropic")):
+        caveats.append(
+            "No model-provider Marketplace service (e.g. Claude/Anthropic) "
+            "appears in Cost Explorer for this period, so third-party model "
+            "spend is absent from these totals. This happens in accounts "
+            "where Marketplace charges post late or not at all — cross-check "
+            "against bedrock_usage (CloudWatch token metrics)."
+        )
+    return hits, caveats
+
 
 @tool
 def attribution_breakdown(
@@ -40,8 +94,10 @@ def attribution_breakdown(
 ) -> str:
     """Break down AWS Bedrock cost by IAM principal, tag, usage type, or account.
 
-    Queries AWS Cost Explorer filtered to ``SERVICE = Amazon Bedrock`` and
-    groups the results by the requested dimension. Requires CUR 2.0
+    Queries AWS Cost Explorer filtered to every Bedrock-related service —
+    "Amazon Bedrock" plus the model-provider Marketplace services third-party
+    models (e.g. Anthropic Claude) bill under — and groups the results by the
+    requested dimension. Requires CUR 2.0
     attribution data (IAM principal / cost-allocation tags) to be enabled
     in the payer account — see ``scripts/enable_cur_attribution.py``.
 
@@ -103,6 +159,8 @@ def _attribution_breakdown_impl(dimension: str, start_date: str, end_date: str) 
         })
 
     ce = boto3.client("ce")
+    services, service_caveats = _bedrock_service_values(ce, start_str, end_str)
+    caveats += service_caveats
     try:
         response = ce.get_cost_and_usage(
             TimePeriod={"Start": start_str, "End": end_str},
@@ -111,7 +169,7 @@ def _attribution_breakdown_impl(dimension: str, start_date: str, end_date: str) 
             Filter={
                 "Dimensions": {
                     "Key": "SERVICE",
-                    "Values": [_BEDROCK_SERVICE],
+                    "Values": services,
                 }
             },
             GroupBy=[group_by],
@@ -153,6 +211,7 @@ def _attribution_breakdown_impl(dimension: str, start_date: str, end_date: str) 
     result = {
         "period": {"start": start_str, "end": end_str},
         "dimension": dimension,
+        "services_included": services,
         "groups": groups,
         "total_cost_usd": total_cost,
         "caveats": caveats,

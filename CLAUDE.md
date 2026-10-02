@@ -65,7 +65,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Consumes the April 17, 2026 AWS Bedrock granular cost attribution feature (IAM principal + `iamPrincipal/*` tags in CUR 2.0)
 - Tool: `attribution_breakdown` — dimensions: `principal`, `tag:<key>`, `usage_type`, `account`
 - Data source: AWS Cost Explorer (`ce:GetCostAndUsage`); CUR 2.0 parquet reader deferred
-- Known gap: Anthropic models bill via AWS Marketplace under the model provider's service name, NOT `Amazon Bedrock` — the `SERVICE = Amazon Bedrock` filter in `tools/attribution.py` misses all Claude spend
+- Anthropic models bill via AWS Marketplace under the model provider's service name, NOT `Amazon Bedrock` (per the Bedrock model cards) — `tools/attribution.py` discovers the SERVICE filter via `ce:GetDimensionValues` (hints: bedrock/claude/anthropic), reports `services_included`, and caveats when no provider service exists in CE (some accounts never receive the Marketplace charges; cross-check with `bedrock_usage`)
 - Principal grouping uses the `aws:PrincipalArn` tag path in CE (no native `IAM_PRINCIPAL` dimension as of 2026-04)
 - One-shot setup: `python -m scripts.enable_cur_attribution --bucket <s3-bucket>` creates/updates a CUR 2.0 export with `INCLUDE_IAM_PRINCIPAL_DATA=TRUE` and activates every `iamPrincipal/*` cost-allocation tag
 - Setup is idempotent — safe to re-run; `--status` reports current state, `--tags-only` skips export step, `--dry-run` previews actions
