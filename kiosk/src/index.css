@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes kiosk-kenburns {
+  from { transform: scale(1.02); }
+  to { transform: scale(1.14) translate(-2%, -1.5%); }
+}
+
+/* Markdown styling for the terminal replay */
+.md { color: #d6deee; }
+.md h1, .md h2, .md h3, .md h4 {
+  color: #f1f5fb;
+  font-weight: 700;
+  margin: 0.9em 0 0.4em;
+  line-height: 1.25;
+}
+.md h1 { font-size: 1.25em; }
+.md h2 { font-size: 1.15em; }
+.md h3 { font-size: 1.02em; }
+.md p { margin: 0.45em 0; }
+.md ul, .md ol { margin: 0.45em 0 0.45em 1.4em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li { margin: 0.18em 0; }
+.md strong { color: #ffffff; }
+.md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.7em 0;
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
+}
+.md th, .md td {
+  border: 1px solid #1d2a4a;
+  padding: 5px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+.md th { background: #131c33; color: #9fb4e0; font-weight: 600; }
+.md tr:nth-child(even) td { background: rgba(19, 28, 51, 0.45); }
+.md code {
+  background: #131c33;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.md hr { border-color: #1d2a4a; margin: 0.8em 0; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }

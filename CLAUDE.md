@@ -10,12 +10,14 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
-- `agent/agent.py` - Strands Agent with system prompt, 12 tools, and efficiency advisor
+- `agent/agent.py` - Strands Agent with system prompt, 13 tools (`TOKEN_COP_TOOLS`), `build_system_prompt(today)`, and efficiency advisor
+- `agent/harness_client.py` - `InvokeHarness` streaming client (text + token usage + stop reason) for the harness twin
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
 - `tools/` - One file per provider, each exports a @tool-decorated function
 - `models/` - Data schemas, pricing table, model name normalization
 - `memory/store.py` - AgentCore Memory helpers (store/retrieve snapshots)
+- `kiosk/` - React/Vite 5-minute kiosk demo (self-looping scene playlist; replays real recorded MCP captures, deck-slide PNGs, native AWS-icon architecture scenes)
 
 ## Tools
 - `bedrock_usage` - CloudWatch metrics (AWS/Bedrock namespace)
@@ -95,8 +97,21 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Cognito User Pool: `us-east-1_hYAk8mbYH`, Domain: `agentcore-d4673f36`
 - Token refresh: handled in-process by `mcp_server.py`, see `docs/mcp-gateway.md`
 - `mcp_server.py` - Stdio MCP server for Claude Code, default backend=gateway (JWT/HTTPS)
-- Set `TOKEN_COP_BACKEND=direct` to bypass gateway and call runtime via boto3/IAM
+- Set `TOKEN_COP_BACKEND=direct` to bypass gateway and call runtime via boto3/IAM; `TOKEN_COP_BACKEND=harness` to call the managed harness twin
 - `/tokcop <question>` - Claude Code skill to query token usage
+
+## Harness Twin (managed AgentCore harness, opt-in)
+- Same agent as a config-only AgentCore harness (`token_cop_harness`); the container runtime stays untouched
+- Provisioned via `python -m scripts.setup_harness --enable` (idempotent; `--status/--dry-run/--teardown/--emit-tool-schema/--update-prompt/--endpoint NAME --version N`)
+- Tools: the 13 `TOKEN_COP_TOOLS` re-hosted in Lambda `token-cop-tools` (arm64, deps bundled via `uv`) as gateway target `token-cop-tools` on the existing gateway → tools appear as `token-cop-tools___<name>`; handler `scripts/lambda/tool_dispatch.py` dispatches on `bedrockAgentCoreToolName`
+- Gateway tool schema is GENERATED from each Strands `tool_spec` (strip `default`; gateway SchemaDefinition allows only type/description/properties/required/items) — the two chassis cannot drift
+- Harness → gateway auth: OAuth2 credential provider `token-cop-cognito` (Cognito client_credentials, scope `token-cop-gateway/invoke`); `allowedTools=["@token-cop-gw/token-cop-tools___*"]` excludes the recursive `token_cop` tool and the ~900-token built-in shell/file tools
+- Harness has NO prompt templating: callers pass `systemPrompt=[{"text": build_system_prompt()}]` per invoke; no hooks, no custom loop, no in-process tools; scrubbing happens client-side in `mcp_server.py`
+- `mcp_server.py` backend `TOKEN_COP_BACKEND=harness` (one `runtimeSessionId` per MCP process; usage footer appended); `token_cop(prompt, backend=...)` overrides per call
+- Demo: `python -m scripts.harness_demo` (6 acts: two chassis, trim built-ins, act on `recommend_model` via `model` override, hard caps, Cedar ENFORCE on both, versions/endpoints/export)
+- SSM keys: `/token-cop/harness-arn`, `/token-cop/harness-id`
+- Needs `boto3>=1.43` (harness APIs). Two `agentcore` CLIs exist: `.venv/bin/agentcore` (Python toolkit: deploy/eval) vs `/opt/homebrew/bin/agentcore` (npm: `export harness`); this repo uses boto3 for harness ops
+- Docs: `docs/harness.md`; CTO talk track: `docs/harness-demo-talk-track.md`
 
 ## Budget Enforcement (Option 3, opt-in)
 - Provisioned via `python -m scripts.setup_enforcement --enable` (idempotent)
@@ -125,6 +140,13 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Custom evaluators: `evaluators/token_cop_evaluators.json` (data_completeness, cost_formatting)
 - Reset: `python -m scripts.eval_demo --reset` (clean slate between demos)
 - Docs: `docs/evaluations.md`
+
+## Kiosk Demo
+- `kiosk/` — standalone React 18 + Vite + Tailwind SPA, ~5-min self-looping demo (11 scenes, ~284s; dwells tuned to the narration clip lengths in `kiosk/narration.txt`); pattern ported from AgentCoreKiosk's engine (playlist/watchdog/pause/Esc-Esc + presenter keys ←/→/Space)
+- Run: `cd kiosk && npm run dev` → `?kiosk=1`; smoke: `&kioskFast=1` (5% speed); build gate: `npm run captures:check && tsc && vite build`
+- Replay scenes play GENUINE recorded `token_cop` MCP exchanges from `kiosk/public/captures/*.json` — refresh via the live MCP tool before events (procedure + caption-number coupling in `docs/kiosk-demo.md`)
+- Slide PNGs rendered via LibreOffice headless (`kiosk/scripts/export-slides.sh`); PowerPoint AppleScript export is sandbox-blocked; PDF page numbers ≠ pptx slide numbers (32 hidden slides)
+- AWS icons: official 48px set in `kiosk/src/kiosk/overlay/aws/`; arch scenes sync node highlights to caption steps via `HOT_BY_STEP`
 
 ## Git Filter
 - AWS account ID scrubbed from git via clean/smudge filter

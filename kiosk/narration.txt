@@ -1,0 +1,21 @@
+This is Token Cop — a cost cop for AI agents, running on Amazon Bedrock AgentCore. Every token your agents spend, it sees, audits, and — if you want — enforces. Here's five minutes on how it works.
+
+These are real twenty-twenty-six headlines. Inference is draining enterprise AI budgets, and overspending has become a meme. The pattern repeats everywhere: adoption soars first, and only then does anyone ask — which user, which model, which workload actually spent the money? Usually, nobody can answer.
+
+Break down an agent's monthly bill and the story is simple: roughly seventy percent is LLM inference. Not compute, not storage — tokens. That is the line Token Cop polices.
+
+And tokens compound. Every chat turn re-sends the whole history, so turn one costs three thousand tokens and turn four costs sixty-six hundred. Prompt caching discounts those re-reads by ninety percent — yet at this volume, cached context was still sixty-four percent of our real bill.
+
+So how does it work? A developer asks a question — slash tokcop — right inside Claude Code. A local MCP server signs the call with Cognito: a real JWT, not a prompt claim. The request crosses the AgentCore MCP Gateway to its Lambda target, and lands on AgentCore Runtime, where a Strands agent runs Claude on Bedrock. From there it reaches thirteen tools — CloudWatch, Cost Explorer, S3 invocation logs, provider APIs, AgentCore Memory. The answer comes back scrubbed of secrets. Seconds, not spreadsheets.
+
+What you're watching now is a real exchange, recorded from the live tool — not a mock-up. The question: what did we spend on Bedrock in the last seven days, by model? Token Cop pulls CloudWatch metrics and prices every model from its own pricing table. One hundred eighty-eight dollars across six models, an eighty-eight percent cache hit rate — and it calls out that caching saved about a hundred and forty-six dollars.
+
+Next, a full token audit — also recorded live. Six efficiency dimensions: cache utilization, model mix, context efficiency, output ratios, and more. It grades real usage and hands back the receipts — here, an exceptional cache strategy, but most of the spend sitting on premium models, with a concrete recommendation to shift mid-tier work down a tier.
+
+Here's where it earns its badge. Summarize five hundred support tickets daily — which model? Token Cop classifies the task: that's polish-tier work, not frontier-model work. Nova Lite at about eight cents a day, instead of twenty-two fifty on a reasoning model. Same job, ninety-five percent cheaper. That's a smart token.
+
+One agent, a whole platform. AgentCore Runtime at the center, with Memory and the MCP Gateway beside it. Cognito identity and Cedar policies gate every tool call — permit, forbid, audit. OpenTelemetry spans flow to X-Ray and CloudWatch, so every token and every tool call is traced. A harness twin runs the same agent as pure config. And if someone blows their budget, a meter Lambda flips an IAM deny. That is enforcement, not just a dashboard.
+
+For the team, there's a dashboard: live spend, model mix, cache utilization. Recommendations rank the cheapest safe model for each workload, and efficiency scores show whether each tier is earning its cost — all from the same data the agent uses.
+
+The mantra: more tokens is fine — they need to be smart tokens. Scan the QR, clone the repo, and put a cop on your token beat. Thanks for watching.

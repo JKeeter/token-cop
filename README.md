@@ -26,18 +26,26 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 - **MCP Gateway** - HTTPS endpoint with Cognito JWT authentication
 - **Cedar policies** - Access control via AgentCore Policy Engine
 - **Observability** - OTEL tracing with AgentCore evaluations
+- **Harness twin** - The same agent as a config-only AgentCore *harness*, sharing the gateway and Cedar policies with the container runtime; switch with `TOKEN_COP_BACKEND=harness`
 - **Claude Code hooks** - PreToolUse hook intercepts binary file reads
 
 ## Architecture
 
 ```
 Claude Code ──► MCP Server (stdio) ──► MCP Gateway (HTTPS/JWT) ──► Lambda ──► AgentCore Runtime ──► Strands Agent
-                                                                                                       │
-                                                                                    ┌──────────────────┼──────────────────┐
-                                                                                    ▼                  ▼                  ▼
-                                                                              CloudWatch         OpenRouter API      OpenAI Admin API
-                                                                            (AWS/Bedrock)
+                     │                        │                                                          │
+                     │ TOKEN_COP_BACKEND=     │ target token-cop-tools ──► Lambda (13 tools)             │
+                     │ harness                │        ▲                                                 │
+                     └──► AgentCore Harness ──┘ (managed Strands loop, OAuth via Cognito)                │
+                                                                                     ┌──────────────────┼──────────────────┐
+                                                                                     ▼                  ▼                  ▼
+                                                                               CloudWatch         OpenRouter API      OpenAI Admin API
+                                                                             (AWS/Bedrock)
 ```
+
+Two chassis, one governed tool plane: the container runtime runs our Strands loop in-process;
+the harness runs an AWS-managed Strands loop from configuration and reaches the same 13 tools
+through the same gateway (and the same Cedar policies). See [docs/harness.md](docs/harness.md).
 
 ## Prerequisites
 
@@ -86,6 +94,21 @@ The MCP server is configured in the project's `.mcp.json`. Use it via:
 | "Compare Bedrock vs OpenRouter costs" | Side-by-side provider comparison |
 | "Save my current usage for later" | Persists a snapshot to AgentCore Memory |
 | "What was my usage trend last month?" | Searches historical snapshots |
+
+## Kiosk Demo
+
+A self-running ~5-minute visual demo (React/Vite SPA in `kiosk/`): attract
+loop with QR, deck slides with Ken Burns, animated AWS-icon architecture
+scenes, and replays of **real recorded** `token_cop` MCP exchanges in a
+Claude Code-style terminal.
+
+```bash
+cd kiosk && npm install && npm run dev     # http://localhost:5173/?kiosk=1
+```
+
+Presenter keys: ← / → jump scenes, Space pauses, Esc Esc exits; any touch
+pauses 60s. Full runbook (booth launch, capture refresh, slide re-export):
+[docs/kiosk-demo.md](docs/kiosk-demo.md).
 
 ## Tools
 
@@ -348,6 +371,24 @@ The agent is exposed via an MCP Gateway with Cognito JWT authentication. The `mc
 Set `TOKEN_COP_BACKEND=direct` to bypass the gateway and call the AgentCore Runtime directly via boto3/IAM.
 
 See [docs/mcp-gateway.md](docs/mcp-gateway.md) for the full architecture.
+
+## Harness Twin (managed AgentCore harness)
+
+The same agent also runs as an [AgentCore harness](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html):
+no container, the loop is AWS-managed, and model/prompt/tools/limits are configuration. The 13
+tools are hosted in a Lambda behind the existing gateway, so both chassis obey the same Cedar policies.
+
+```bash
+python -m scripts.setup_harness --dry-run --enable   # preview
+python -m scripts.setup_harness --enable             # provision (idempotent)
+python -m scripts.setup_harness --status
+TOKEN_COP_BACKEND=harness python mcp_server.py       # or set it in .mcp.json env
+
+python -m scripts.harness_demo                       # 6-act CTO demo (runtime vs harness)
+python -m scripts.setup_harness --teardown
+```
+
+See [docs/harness.md](docs/harness.md) for architecture, IAM, trade-offs, and the demo runbook.
 
 ## Policies
 
