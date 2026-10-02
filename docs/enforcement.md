@@ -220,6 +220,12 @@ aws dynamodb get-item \
   (option 4 in `<notes>.md`).
 - **IAM consistency**: deny policy attachment may take ~30 seconds to
   propagate.
+- **Pricing is an estimate**: the meter prices input, output, cache-read
+  and cache-write tokens from an inline table at list (global cross-Region)
+  rates. Geo profiles (`us.`, `eu.`, ...) bill ~10% higher, and 1-hour cache
+  writes (2x input) are priced at the 5-minute rate (1.25x), so the meter
+  slightly undercounts both. Usage rows also carry `tokens_cache_read` and
+  `tokens_cache_write`.
 - **Assumed roles**: principals that arrive as
   `arn:aws:sts::ACCT:assumed-role/RoleName/session-name` are metered
   per role, not per session. If multiple users share a role, the budget

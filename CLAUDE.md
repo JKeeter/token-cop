@@ -65,6 +65,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Consumes the April 17, 2026 AWS Bedrock granular cost attribution feature (IAM principal + `iamPrincipal/*` tags in CUR 2.0)
 - Tool: `attribution_breakdown` — dimensions: `principal`, `tag:<key>`, `usage_type`, `account`
 - Data source: AWS Cost Explorer (`ce:GetCostAndUsage`); CUR 2.0 parquet reader deferred
+- Known gap: Anthropic models bill via AWS Marketplace under the model provider's service name, NOT `Amazon Bedrock` — the `SERVICE = Amazon Bedrock` filter in `tools/attribution.py` misses all Claude spend
 - Principal grouping uses the `aws:PrincipalArn` tag path in CE (no native `IAM_PRINCIPAL` dimension as of 2026-04)
 - One-shot setup: `python -m scripts.enable_cur_attribution --bucket <s3-bucket>` creates/updates a CUR 2.0 export with `INCLUDE_IAM_PRINCIPAL_DATA=TRUE` and activates every `iamPrincipal/*` cost-allocation tag
 - Setup is idempotent — safe to re-run; `--status` reports current state, `--tags-only` skips export step, `--dry-run` previews actions
@@ -122,7 +123,8 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - DDB schema: PK=`principal_arn`, SK=`YYYY-MM` (usage row) | `budget` (per-principal override) | `denied` (active block marker)
 - Tools: `enforcement_status`, `set_principal_budget`, `list_denied_principals` (graceful "not enabled" when SSM keys absent)
 - SSM keys: `/token-cop/enforcement-{table,deny-policy-arn,default-budget-usd,log-group}`
-- Lambda pricing table is duplicated inline in `scripts/lambda/token_meter.py` to keep zero-dependency — update both when prices change
+- Lambda pricing table is duplicated inline in `scripts/lambda/token_meter.py` (4-tuples: input/output/cache_read/cache_write) to keep zero-dependency — update both when prices change; unknown models silently fall back to `DEFAULT_PRICING` ($1/$3), so add every new model ID to `models/normalization.py` aliases too
+- Meter reads token counts from nested `input.`/`output.` (legacy top-level fallback) and meters cache tokens — on cached traffic they are most of the cost
 - Assumed-role principals meter per-role not per-session (shared role = shared budget)
 - Docs: `docs/enforcement.md`
 
