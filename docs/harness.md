@@ -6,7 +6,7 @@ Token Cop runs on two chassis that share one governed tool plane:
 |---|---|---|
 | Agent loop | Our Strands code in an ARM64 container (`agent/app.py`) | AWS-managed Strands loop, declared as configuration |
 | Deploy | `agentcore deploy` (CodeBuild → ECR → Runtime) | `python -m scripts.setup_harness --enable` (one API call) |
-| Tools | 13 `@tool` functions in-process | Same 13 tools, hosted in Lambda behind the MCP Gateway |
+| Tools | 14 `@tool` functions in-process | Same 14 tools, hosted in Lambda behind the MCP Gateway |
 | System prompt | Rendered in `create_agent()` | Same template, rendered by the caller per invocation |
 | Memory | Tool-driven snapshots to AgentCore Memory | Same (via gateway tools); conversation memory disabled for parity |
 | Tracing | Hand-rolled ADOT in `agent/tracing.py` | Automatic (CloudWatch GenAI Observability → **Harnesses** tab) |
@@ -27,7 +27,7 @@ Claude Code /tokcop ─► mcp_server.py ─TOKEN_COP_BACKEND─┬─ gateway (
                                                                                        │  agentcore_gateway tool
                                                                                        │  (OAuth client_credentials via Cognito)
                                                                                        ▼
-                             token-cop-gateway-7q9nodpeem ─► target token-cop-tools ─► Lambda token-cop-tools (13 tools)
+                             token-cop-gateway-7q9nodpeem ─► target token-cop-tools ─► Lambda token-cop-tools (14 tools)
                              (Cedar policy engine gates both chassis)
 ```
 
@@ -64,7 +64,7 @@ Resources created (all named `token-cop-tools*` / `token-cop-harness*` / `token_
 
 | Resource | Name | Purpose |
 |---|---|---|
-| Lambda | `token-cop-tools` (arm64, py3.13, 1024 MB, 300 s) | Hosts the 13 tools; dispatches on `bedrockAgentCoreToolName` |
+| Lambda | `token-cop-tools` (arm64, py3.13, 1024 MB, 300 s) | Hosts the 14 tools; dispatches on `bedrockAgentCoreToolName` |
 | IAM role | `token-cop-tools-lambda-role` | CloudWatch, S3 logs, Cost Explorer, DynamoDB, IAM deny-policy attach, AgentCore Memory, SSM |
 | Gateway target | `token-cop-tools` on `token-cop-gateway-7q9nodpeem` | Exposes tools as `token-cop-tools___<name>` |
 | OAuth2 credential provider | `token-cop-cognito` | Harness → gateway auth (Cognito client_credentials) |

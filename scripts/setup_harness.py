@@ -3,13 +3,13 @@
 The harness is AWS's managed Strands agent loop: model, system prompt, tools,
 and limits are declared as configuration and AgentCore runs the loop. Token
 Cop's container runtime is left untouched — this script stands up a second
-chassis that calls the SAME 13 tools through the SAME gateway (and therefore
+chassis that calls the SAME 14 tools through the SAME gateway (and therefore
 the same Cedar policy engine).
 
 Resources created (idempotent; nothing here touches the gateway itself, the
 existing ``token-cop-target``, or Cognito):
   - IAM role        : token-cop-tools-lambda-role
-  - Lambda          : token-cop-tools              (13 tools, python3.13/arm64)
+  - Lambda          : token-cop-tools              (14 tools, python3.13/arm64)
   - Gateway target  : token-cop-tools              (Lambda target on token-cop-gateway-7q9nodpeem;
                                                     tools appear as token-cop-tools___<name>)
   - Lambda permission + inline policy on AgentCoreGatewayExecutionRole to invoke it
@@ -264,7 +264,7 @@ def harness_trust_policy(acct: str) -> dict:
 
 
 def tools_lambda_policy(acct: str) -> dict:
-    """Everything the 13 tools call (mirrors the runtime execution role).
+    """Everything the 14 tools call (mirrors the runtime execution role).
 
     Verified against ``boto3.client(`` calls in tools/, memory/, agent/config.py:
     CloudWatch metrics, SSM+KMS (secrets), S3 (invocation logs), Cost Explorer,

@@ -34,7 +34,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 ```
 Claude Code ──► MCP Server (stdio) ──► MCP Gateway (HTTPS/JWT) ──► Lambda ──► AgentCore Runtime ──► Strands Agent
                      │                        │                                                          │
-                     │ TOKEN_COP_BACKEND=     │ target token-cop-tools ──► Lambda (13 tools)             │
+                     │ TOKEN_COP_BACKEND=     │ target token-cop-tools ──► Lambda (14 tools)             │
                      │ harness                │        ▲                                                 │
                      └──► AgentCore Harness ──┘ (managed Strands loop, OAuth via Cognito)                │
                                                                                      ┌──────────────────┼──────────────────┐
@@ -44,7 +44,7 @@ Claude Code ──► MCP Server (stdio) ──► MCP Gateway (HTTPS/JWT) ─�
 ```
 
 Two chassis, one governed tool plane: the container runtime runs our Strands loop in-process;
-the harness runs an AWS-managed Strands loop from configuration and reaches the same 13 tools
+the harness runs an AWS-managed Strands loop from configuration and reaches the same 14 tools
 through the same gateway (and the same Cedar policies). See [docs/harness.md](docs/harness.md).
 
 ## Prerequisites
@@ -375,7 +375,7 @@ See [docs/mcp-gateway.md](docs/mcp-gateway.md) for the full architecture.
 ## Harness Twin (managed AgentCore harness)
 
 The same agent also runs as an [AgentCore harness](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html):
-no container, the loop is AWS-managed, and model/prompt/tools/limits are configuration. The 13
+no container, the loop is AWS-managed, and model/prompt/tools/limits are configuration. The 14
 tools are hosted in a Lambda behind the existing gateway, so both chassis obey the same Cedar policies.
 
 ```bash

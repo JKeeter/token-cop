@@ -10,7 +10,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
-- `agent/agent.py` - Strands Agent with system prompt, 13 tools (`TOKEN_COP_TOOLS`), `build_system_prompt(today)`, and efficiency advisor
+- `agent/agent.py` - Strands Agent with system prompt, 14 tools (`TOKEN_COP_TOOLS`), `build_system_prompt(today)`, and efficiency advisor
 - `agent/harness_client.py` - `InvokeHarness` streaming client (text + token usage + stop reason) for the harness twin
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
@@ -104,7 +104,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 ## Harness Twin (managed AgentCore harness, opt-in)
 - Same agent as a config-only AgentCore harness (`token_cop_harness`); the container runtime stays untouched
 - Provisioned via `python -m scripts.setup_harness --enable` (idempotent; `--status/--dry-run/--teardown/--emit-tool-schema/--update-prompt/--endpoint NAME --version N`)
-- Tools: the 13 `TOKEN_COP_TOOLS` re-hosted in Lambda `token-cop-tools` (arm64, deps bundled via `uv`) as gateway target `token-cop-tools` on the existing gateway → tools appear as `token-cop-tools___<name>`; handler `scripts/lambda/tool_dispatch.py` dispatches on `bedrockAgentCoreToolName`
+- Tools: the 14 `TOKEN_COP_TOOLS` re-hosted in Lambda `token-cop-tools` (arm64, deps bundled via `uv`) as gateway target `token-cop-tools` on the existing gateway → tools appear as `token-cop-tools___<name>`; handler `scripts/lambda/tool_dispatch.py` dispatches on `bedrockAgentCoreToolName`
 - Gateway tool schema is GENERATED from each Strands `tool_spec` (strip `default`; gateway SchemaDefinition allows only type/description/properties/required/items) — the two chassis cannot drift
 - Harness → gateway auth: OAuth2 credential provider `token-cop-cognito` (Cognito client_credentials, scope `token-cop-gateway/invoke`); `allowedTools=["@token-cop-gw/token-cop-tools___*"]` excludes the recursive `token_cop` tool and the ~900-token built-in shell/file tools
 - Harness has NO prompt templating: callers pass `systemPrompt=[{"text": build_system_prompt()}]` per invoke; no hooks, no custom loop, no in-process tools; scrubbing happens client-side in `mcp_server.py`

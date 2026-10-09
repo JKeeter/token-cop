@@ -13,6 +13,7 @@ from tools.budget import check_budget
 from tools.model_router import recommend_model
 from tools.invocation_logs import analyze_invocation_logs
 from tools.attribution import attribution_breakdown
+from tools.audit import token_audit
 from tools.enforcement import (
     enforcement_status,
     list_denied_principals,
@@ -104,7 +105,7 @@ Available providers: AWS Bedrock, OpenRouter, OpenAI
 TOKEN_COP_TOOLS = [
     bedrock_usage, openrouter_usage, openai_usage,
     aggregate_usage, save_snapshot, search_history, check_budget,
-    recommend_model, analyze_invocation_logs, attribution_breakdown,
+    recommend_model, token_audit, analyze_invocation_logs, attribution_breakdown,
     enforcement_status, set_principal_budget, list_denied_principals,
 ]
 

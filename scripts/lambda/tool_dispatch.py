@@ -1,4 +1,4 @@
-"""Gateway Lambda target that fronts the 13 Token Cop tools for the harness twin.
+"""Gateway Lambda target that fronts the 14 Token Cop tools for the harness twin.
 
 The AgentCore *harness* runs a managed Strands loop with no in-process Python
 tools, so the same ``@tool`` functions the container runtime calls directly

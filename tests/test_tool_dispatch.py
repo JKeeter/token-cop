@@ -44,7 +44,7 @@ class ToolDispatchTests(unittest.TestCase):
     def test_registry_matches_agent_tool_list(self):
         from agent.agent import TOKEN_COP_TOOLS
         self.assertEqual(set(tool_dispatch.REGISTRY), {t.tool_name for t in TOKEN_COP_TOOLS})
-        self.assertEqual(len(tool_dispatch.REGISTRY), 13)
+        self.assertEqual(len(tool_dispatch.REGISTRY), 14)
 
     def test_dispatches_prefixed_tool_name_from_client_context(self):
         out = tool_dispatch.handler({"task_description": "fix typo"}, _ctx("token-cop-tools___recommend_model"))
