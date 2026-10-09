@@ -24,6 +24,16 @@ Claude Code ──stdio──> mcp_server.py ──JWT/HTTPS──> MCP Gateway 
         stdio MCP server (configured in settings.json)
 ```
 
+### Response unwrapping
+
+Two layers of JSON wrap the agent's markdown on the way back: `BedrockAgentCoreApp`
+JSON-encodes the entrypoint's return value (so a string arrives as `"\"## ...\""`), and the
+`token-cop-gateway-handler` Lambda wraps that in `{"result": ...}` before the gateway
+puts it in the MCP `content[].text`. `mcp_server._decode_agent_payload` peels each layer
+recursively (depth-capped) on both the gateway and direct paths, so `/tokcop` renders
+markdown rather than JSON-in-JSON. The harness path never has these layers; it returns
+`InvokeHarness` text plus a usage footer.
+
 ### Alternate: Direct Mode
 
 ```

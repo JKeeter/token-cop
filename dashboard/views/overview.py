@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard.data import compute_smart_token_score, get_model_mix
+from models.efficiency import cache_hit_ratio, effective_input_tokens
 
 
 # Grade color mapping
@@ -106,7 +107,9 @@ def render_overview(data: dict, audit: dict | None) -> None:
     # --- Cache hit ratio ---
     total_input = totals.get("input_tokens", 0)
     cache_read = totals.get("cache_read_tokens", 0)
-    cache_ratio = cache_read / total_input if total_input > 0 else 0
+    cache_write = totals.get("cache_write_tokens", 0)
+    effective_input = effective_input_tokens(total_input, cache_read, cache_write)
+    cache_ratio = cache_hit_ratio(total_input, cache_read, cache_write)
 
     st.subheader("Cache Utilization")
     cache_col1, cache_col2 = st.columns([2, 1])
@@ -115,7 +118,7 @@ def render_overview(data: dict, audit: dict | None) -> None:
     with cache_col2:
         st.markdown(
             f"**{cache_ratio * 100:.1f}%** cache hit rate "
-            f"({cache_read:,} / {total_input:,} input tokens)"
+            f"({cache_read:,} cached / {effective_input:,} effective input tokens)"
         )
 
     st.divider()

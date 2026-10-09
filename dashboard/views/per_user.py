@@ -9,6 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 from dashboard.data import get_model_mix, get_principal_breakdown
+from models.efficiency import cache_hit_ratio
 from models.model_tiers import get_model_tier
 
 
@@ -220,11 +221,12 @@ def _render_model_section(data: dict, anonymize: bool) -> None:
         input_tok = m.get("input_tokens", 0)
         output_tok = m.get("output_tokens", 0)
         cache_read = m.get("cache_read_tokens", 0)
+        cache_write = m.get("cache_write_tokens", 0)
         requests = m.get("requests", 0)
         cost = m.get("cost", 0)
 
         output_ratio = output_tok / input_tok if input_tok > 0 else 0
-        cache_ratio = cache_read / input_tok if input_tok > 0 else 0
+        cache_ratio = cache_hit_ratio(input_tok, cache_read, cache_write)
         cpr = cost / requests if requests > 0 else 0
         eff_score = min(100, (min(output_ratio, 1.0) * 50) + (cache_ratio * 30) + 20)
 

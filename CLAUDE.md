@@ -16,7 +16,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `agent/tracing.py` - OTEL tracing + ADOT configurator for AgentCore span export
 - `agent/guardrails.py` - Output scrubbing for API keys/secrets
 - `tools/` - One file per provider, each exports a @tool-decorated function
-- `models/` - Data schemas, pricing table, model name normalization
+- `models/` - Data schemas, pricing table, model name normalization, cache-aware ratios (`efficiency.py`)
 - `memory/store.py` - AgentCore Memory helpers (store/retrieve snapshots)
 - `kiosk/` - React/Vite 5-minute kiosk demo (self-looping scene playlist; replays real recorded MCP captures, deck-slide PNGs, native AWS-icon architecture scenes)
 
@@ -83,6 +83,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - All providers normalize to `TokenUsageRecord` dataclass
 - Model names normalized via `models/normalization.py` aliases
 - Costs estimated via `models/pricing.py` lookup table
+- Cache hit ratio is ALWAYS `cache_read / (input + cache_read + cache_write)` via `models/efficiency.cache_hit_ratio` — provider `input_tokens` is only the uncached delta, so dividing by it alone produced a "7942% cache hit rate" in the audit. Used by `tools/audit.py`, `dashboard/data.py`, and both dashboard views
 - `classify_task` (`models/model_tiers.py`) returns a `TierResult` (tier/confidence/signals); tier may be `"unknown"`. Structural signals (input size, code, message count) are optional kwargs — supplied by the invocation-log path, omitted by `recommend_model`
 - Today's date injected into system prompt (LLM doesn't know current date)
 - Date parsing uses dateutil for robustness (LLM may pass non-YYYY-MM-DD)
@@ -99,6 +100,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Cognito User Pool: `us-east-1_hYAk8mbYH`, Domain: `agentcore-d4673f36`
 - Token refresh: handled in-process by `mcp_server.py`, see `docs/mcp-gateway.md`
 - `mcp_server.py` - Stdio MCP server for Claude Code, default backend=gateway (JWT/HTTPS)
+- Gateway and direct backends both run the answer through `_decode_agent_payload`, which peels every JSON layer (runtime JSON-encodes the entrypoint string; the gateway handler Lambda wraps that in `{"result": ...}`) so Claude Code sees markdown, not JSON-in-JSON
 - Set `TOKEN_COP_BACKEND=direct` to bypass gateway and call runtime via boto3/IAM; `TOKEN_COP_BACKEND=harness` to call the managed harness twin
 - `/tokcop <question>` - Claude Code skill to query token usage
 

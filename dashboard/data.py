@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from models.efficiency import cache_hit_ratio
 from models.model_tiers import get_model_tier, TIERS
 from models.pricing import PRICING_PER_MILLION
 
@@ -212,7 +213,9 @@ def compute_smart_token_score(data: dict) -> float:
     """Compute a composite 'Smart Token Score' (0-100).
 
     Formula: (useful_output_tokens / total_input_tokens) * cache_bonus * 100
-    Where cache_bonus = 1 + (cache_read_ratio * 0.5)
+    Where cache_bonus = 1 + (cache_hit_ratio * 0.5), and cache_hit_ratio is
+    cache reads over EFFECTIVE input (uncached + cache read + cache write),
+    so the bonus is bounded at 1.5.
 
     Higher score = more efficient use of tokens.
     """
@@ -220,6 +223,7 @@ def compute_smart_token_score(data: dict) -> float:
     total_input = totals.get("input_tokens", 0)
     total_output = totals.get("output_tokens", 0)
     cache_read = totals.get("cache_read_tokens", 0)
+    cache_write = totals.get("cache_write_tokens", 0)
 
     if total_input == 0:
         return 0.0
@@ -228,7 +232,7 @@ def compute_smart_token_score(data: dict) -> float:
     output_ratio = min(total_output / total_input, 1.0)
 
     # Cache bonus: reward for using cached tokens
-    cache_ratio = cache_read / total_input if total_input > 0 else 0
+    cache_ratio = cache_hit_ratio(total_input, cache_read, cache_write)
     cache_bonus = 1.0 + (cache_ratio * 0.5)
 
     # Model mix bonus: reward for using cheaper models where appropriate

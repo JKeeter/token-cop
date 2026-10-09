@@ -130,7 +130,10 @@ def _call_via_gateway(prompt: str) -> str:
         content = result["result"]
         if isinstance(content, dict) and "content" in content:
             parts = content["content"]
-            return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            # The gateway handler Lambda returns {"result": <runtime payload>} and the
+            # runtime JSON-encodes the entrypoint's string, so peel both layers.
+            return _decode_agent_payload(text)
         return json.dumps(content)
     if "error" in result:
         return f"Gateway error: {result['error']}"
@@ -176,18 +179,27 @@ def _call_direct(prompt: str) -> str:
     return _decode_agent_payload(text) or "No response received from Token Cop agent."
 
 
-def _decode_agent_payload(text: str) -> str:
-    """Unwrap the JSON the runtime wraps around the entrypoint's return value."""
+def _decode_agent_payload(text: str, _depth: int = 0) -> str:
+    """Unwrap every JSON layer around the agent's answer.
+
+    Layers seen in practice: the runtime JSON-encodes the entrypoint's string
+    (``"\"## md\""``); the gateway handler Lambda wraps that in
+    ``{"result": ...}``. Each recursion peels one layer; plain markdown fails
+    ``json.loads`` and is returned as-is. Depth-capped so a pathological
+    payload cannot recurse forever.
+    """
+    if _depth > 4:
+        return text
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
         return text
     if isinstance(data, str):
-        return data
+        return _decode_agent_payload(data, _depth + 1)
     if isinstance(data, dict):
         for key in ("result", "response", "output", "text"):
             if isinstance(data.get(key), str):
-                return data[key]
+                return _decode_agent_payload(data[key], _depth + 1)
     return json.dumps(data)
 
 

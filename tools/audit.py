@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from strands import tool
 
 from agent.tracing import get_tracer
+from models.efficiency import cache_hit_ratio, effective_input_tokens
 from models.pricing import PRICING_PER_MILLION
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def _token_audit_impl(days: int) -> str:
     # Score each dimension
     doc_score, doc_detail = _score_document_ingestion(current_models)
     mix_score, mix_detail = _score_model_mix(current_models, total_requests)
-    cache_score, cache_detail = _score_cache_utilization(total_input, total_cache_read)
+    cache_score, cache_detail = _score_cache_utilization(total_input, total_cache_read, total_cache_write)
     conc_score, conc_detail = _score_cost_concentration(current_models, total_cost)
     trend_score, trend_detail = _score_efficiency_trend(
         current_models, prev_models, total_requests
@@ -213,11 +214,15 @@ def _score_model_mix(models, total_requests):
     return 9, f"Good model distribution — most expensive model ({expensive_name}) handles only {pct:.0f}% of requests"
 
 
-def _score_cache_utilization(total_input, total_cache_read):
-    """Score 1-10 based on cache_read / total_input ratio."""
-    if total_input == 0:
+def _score_cache_utilization(total_input, total_cache_read, total_cache_write=0):
+    """Score 1-10 on the share of EFFECTIVE input served from cache.
+
+    ``total_input`` is the uncached delta, so the denominator must include the
+    cache reads and writes; otherwise heavy cache users score "7942%".
+    """
+    if effective_input_tokens(total_input, total_cache_read, total_cache_write) == 0:
         return 5, "No input token data"
-    ratio = total_cache_read / total_input
+    ratio = cache_hit_ratio(total_input, total_cache_read, total_cache_write)
     pct = ratio * 100
     if pct >= 20:
         return min(10, 8 + int((pct - 20) / 10)), f"{pct:.0f}% cache hit rate — excellent"
