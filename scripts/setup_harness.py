@@ -55,6 +55,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from agent.agent import MODEL_ID, TOKEN_COP_TOOLS, build_system_prompt
+from memory.store import MEMORY_ID  # AGENTCORE_MEMORY_ID override, else TokenCopMemory
 from agent.harness_client import (
     DEFAULT_ALLOWED_TOOLS,
     GATEWAY_TOOL_NAME,
@@ -86,7 +87,8 @@ COGNITO_DISCOVERY_URL = (
 COGNITO_SCOPE = "token-cop-gateway/invoke"
 ENFORCEMENT_TABLE = f"{PREFIX}-enforcement-usage"
 DENY_POLICY_NAME = "TokenCopBedrockBudgetDeny"
-MEMORY_ID = os.environ.get("AGENTCORE_MEMORY_ID", "TokenCopMemory-oGHHvc2vSN")
+# MEMORY_ID is imported from memory.store so the harness IAM policy and the
+# runtime can never point at different memories.
 
 # SSM
 SSM_PREFIX = "/token-cop"

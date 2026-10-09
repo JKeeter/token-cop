@@ -107,7 +107,7 @@ Once attribution data is flowing, these Token Cop surfaces light up:
 | `analyze_invocation_logs` tool | Now extracts `iam_principal` + `inference_profile` per invocation from S3 logs |
 | `check_budget` tool | Accepts `principal=` or `tag_filter=` for scoped burn-rate checks |
 | Streamlit **Per-User** tab | Real IAM-principal grouping (no more `session_id` heuristics) |
-| Weekly report (`generate_report.py`) | Top-N principal breakdown + per-team rollup |
+| Weekly report (`generate_report.py`) | Top-N principal breakdown + per-team rollup + over-budget principals (budgets from the enforcement table when provisioned) |
 | Eval regression suite | New test cases that assert attribution-shaped answers |
 
 ### Example prompts

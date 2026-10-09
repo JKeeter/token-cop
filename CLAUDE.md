@@ -6,7 +6,8 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Framework: Strands Agents with BedrockAgentCoreApp
 - Model: Claude Sonnet 4 on Bedrock
 - Virtual env: `.venv/` (Python 3.13)
-- Memory: AgentCore Memory (`TokenCopMemory-oGHHvc2vSN`)
+- Memory: AgentCore Memory `TokenCopMemory-oGHHvc2vSN` (USER_PREFERENCE + SEMANTIC strategies, 365-day events). `memory/store.py` resolves it from `AGENTCORE_MEMORY_ID`, defaulting to that ID
+- `.bedrock_agentcore.yaml` memory mode is `NO_MEMORY` on purpose: the toolkit's STM-only `token_cop_mem-hpzWit5smt` (no strategies) was never used by the code; `store.py` logs a warning if the toolkit's `BEDROCK_AGENTCORE_MEMORY_ID` points elsewhere. The orphan can be deleted manually once a deploy confirms it is no longer injected
 
 ## Architecture
 - `agent/app.py` - AgentCore entrypoint (BedrockAgentCoreApp)
@@ -29,7 +30,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `check_budget` - Burn rate + projection
 - `recommend_model` - Classify task → reasoning/execution/polish tier recommendation
 - `token_audit` - Score usage efficiency across 6 dimensions (A-F grade), auto-calls invocation log analysis when S3 configured
-- `analyze_invocation_logs` - Deep analysis of Bedrock S3 invocation logs: 7 dimensions (prompt bloat, model-task mismatch, caching, I/O ratio, system prompt weight, response waste, context overhead)
+- `analyze_invocation_logs` - Deep analysis of Bedrock S3 invocation logs: 8 dimensions (prompt bloat, model-task mismatch, caching, I/O ratio, system prompt weight, response waste, context overhead, attribution coverage)
 - `attribution_breakdown` - Break down Bedrock cost via Cost Explorer by IAM principal, cost-allocation tag, usage type, or linked account
 - `context_audit` - Inspect Claude Code environment for context bloat (local MCP tool)
 
@@ -40,7 +41,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - `skills/heavy-file-ingestion/SKILL.md` - Document conversion skill
 - `skills/token-audit/SKILL.md` - `/tokcop-audit` skill (usage + context audit)
 - `models/model_tiers.py` - Reasoning/execution/polish tier definitions + task classifier
-- `dashboard/` - Streamlit team dashboard (overview, per-model, recommendations)
+- `dashboard/` - Streamlit team dashboard (Overview; Per-User & Per-Model with IAM-principal and model tabs; Recommendations)
 - `scripts/generate_report.py` - Weekly markdown/JSON report for Slack/email
 - System prompt includes Token Efficiency Advisor (6 commandments)
 - Mantra: "More tokens is FINE — they need to be SMART tokens"
@@ -53,7 +54,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Logs are gzipped JSON files with batches of invocation records; token counts nest under `input.inputTokenCount`/`output.outputTokenCount` (top-level fallback for legacy)
 - Large prompts are offloaded to `input.inputBodyS3Path`; fetched (capped at `BODY_FETCH_CAP=300`) to recover message text + structural signals
 - Sampling: stratified random across days, default 300 entries max; dollar figures scaled to population via `population_scale = total_objects / sampled_objects`
-- 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead
+- 8 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead, attribution coverage (share of calls carrying an IAM principal, inference-profile ARN, or `requestMetadata`)
 - Context overhead dimension measures actual MCP tool schemas, skills, plugins, CLAUDE.md in system prompts (complements context_audit static estimates)
 - Model-task mismatch uses `classify_task` (weighted keyword scoring + structural signals) with a confidence gate: `unknown`/low-confidence (`< CONF_THRESHOLD=0.5`) entries are excluded, not guessed
 - Classification uses EFFECTIVE input size (`inputTokenCount + cacheRead + cacheWrite`) — raw `inputTokenCount` is only the uncached delta on cached traffic; size + message_count nudges only AMPLIFY a text signal (never create a verdict alone), since large cached context is the norm
@@ -122,6 +123,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Reset Lambda runs `cron(5 0 1 * ? *)` (1st of month 00:05 UTC) — detaches deny policy and clears `denied` markers
 - DDB schema: PK=`principal_arn`, SK=`YYYY-MM` (usage row) | `budget` (per-principal override) | `denied` (active block marker)
 - Tools: `enforcement_status`, `set_principal_budget`, `list_denied_principals` (graceful "not enabled" when SSM keys absent)
+- Budgets have one source of record: `tools/enforcement.load_budget_config()` (default + per-principal override rows, keys scrubbed like attribution output). `scripts/generate_report.py` reads it for "Principals Over Budget" and falls back to the legacy `TOKEN_COP_PRINCIPAL_BUDGETS` env JSON only when enforcement is not provisioned (no default budget applies then)
 - SSM keys: `/token-cop/enforcement-{table,deny-policy-arn,default-budget-usd,log-group}`
 - Lambda pricing table is duplicated inline in `scripts/lambda/token_meter.py` (4-tuples: input/output/cache_read/cache_write) to keep zero-dependency — update both when prices change; unknown models silently fall back to `DEFAULT_PRICING` ($1/$3), so add every new model ID to `models/normalization.py` aliases too
 - Meter reads token counts from nested `input.`/`output.` (legacy top-level fallback) and meters cache tokens — on cached traffic they are most of the cost

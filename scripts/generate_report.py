@@ -94,7 +94,11 @@ def _build_attribution_sections(
         - top_principals: [{principal, cost, percentage, delta_vs_prior_usd,
                             delta_vs_prior_pct}] sorted desc, top 10.
         - over_budget: [{principal, budget_usd, spend_usd, overage_usd}] —
-                       empty when no per-principal budgets defined.
+                       empty when no budgets are configured anywhere.
+        - budget_source: "enforcement" (DynamoDB table provisioned by
+                         setup_enforcement.py), "env" (legacy
+                         TOKEN_COP_PRINCIPAL_BUDGETS), or "none".
+        - default_budget_usd: the enforcement default, or None.
         - team_movement: [{team, current_cost, previous_cost, delta_usd,
                            delta_pct}] sorted by abs(delta_usd) desc.
 
@@ -119,6 +123,8 @@ def _build_attribution_sections(
             "note": _ATTRIBUTION_DISABLED_NOTE,
             "top_principals": [],
             "over_budget": [],
+            "budget_source": "none",
+            "default_budget_usd": None,
             "team_movement": [],
             "error": principal_data.get("error"),
         }
@@ -146,8 +152,9 @@ def _build_attribution_sections(
             "delta_vs_prior_pct": round(delta_pct, 1),
         })
 
-    # --- Principals over budget (optional config via env var) ---
-    over_budget = _compute_over_budget(principal_data.get("groups", []))
+    # --- Principals over budget (enforcement table, else legacy env var) ---
+    budgets = _load_principal_budgets()
+    over_budget = _compute_over_budget(principal_data.get("groups", []), budgets)
 
     # --- Team-tag movement ---
     team_movement = _compute_team_movement(
@@ -159,17 +166,45 @@ def _build_attribution_sections(
         "note": "",
         "top_principals": top_principals,
         "over_budget": over_budget,
+        "budget_source": budgets["source"],
+        "default_budget_usd": budgets["default_usd"],
         "team_movement": team_movement,
         "error": None,
     }
 
 
 def _load_principal_budgets() -> dict:
-    """Load optional per-principal budgets from TOKEN_COP_PRINCIPAL_BUDGETS.
+    """Resolve monthly per-principal budgets from the system of record.
 
-    The env var is a JSON object mapping principal ARN -> monthly USD budget.
-    Returns {} if unset or malformed.
+    Order of precedence:
+      1. The enforcement DynamoDB table (``setup_enforcement.py --enable``):
+         every principal gets ``default_usd`` unless it has an override row.
+         This is what the meter Lambda actually enforces, so the report can
+         never disagree with it.
+      2. Legacy ``TOKEN_COP_PRINCIPAL_BUDGETS`` env var — a JSON object mapping
+         principal ARN -> monthly USD — for installs without enforcement.
+         No default applies in this mode.
+
+    Returns ``{"source": "enforcement"|"env"|"none", "default_usd": float|None,
+    "overrides": {principal: usd}}``.
     """
+    try:
+        from tools.enforcement import load_budget_config
+        cfg = load_budget_config()
+    except Exception as exc:  # SSM/DDB unreachable, missing creds, etc.
+        logger.warning("Could not read enforcement budgets, falling back to env var: %s", exc)
+        cfg = None
+    if cfg:
+        return {"source": "enforcement", "default_usd": cfg["default_usd"], "overrides": cfg["overrides"]}
+
+    env_budgets = _load_env_budgets()
+    if env_budgets:
+        return {"source": "env", "default_usd": None, "overrides": env_budgets}
+    return {"source": "none", "default_usd": None, "overrides": {}}
+
+
+def _load_env_budgets() -> dict:
+    """Parse the legacy TOKEN_COP_PRINCIPAL_BUDGETS JSON env var; {} if unset/malformed."""
     raw = os.environ.get("TOKEN_COP_PRINCIPAL_BUDGETS", "")
     if not raw:
         return {}
@@ -182,15 +217,19 @@ def _load_principal_budgets() -> dict:
     return {}
 
 
-def _compute_over_budget(groups: list) -> list:
-    """Compare current-period principal spend against configured budgets."""
-    budgets = _load_principal_budgets()
-    if not budgets:
+def _compute_over_budget(groups: list, budgets: dict | None = None) -> list:
+    """Compare current-period principal spend against monthly budgets.
+
+    A budget of 0 means "no spend allowed" (enforcement semantics), so any
+    spend against it is an overage. Principals with no budget are skipped.
+    """
+    budgets = budgets if budgets is not None else _load_principal_budgets()
+    if budgets["source"] == "none":
         return []
     over = []
     for g in groups:
-        budget = budgets.get(g["principal"])
-        if budget is None or budget <= 0:
+        budget = budgets["overrides"].get(g["principal"], budgets["default_usd"])
+        if budget is None or budget < 0:
             continue
         if g["cost"] > budget:
             over.append({
@@ -361,6 +400,14 @@ def _append_attribution_markdown(lines: list, attribution: dict) -> None:
     over_budget = attribution.get("over_budget", [])
     if over_budget:
         lines.append("### Principals Over Budget")
+        if attribution.get("budget_source") == "enforcement":
+            default = attribution.get("default_budget_usd")
+            lines.append(
+                f"*Monthly budgets from the enforcement table"
+                f"{f' (default ${default:,.2f}; per-principal overrides applied)' if default is not None else ''}.*"
+            )
+        elif attribution.get("budget_source") == "env":
+            lines.append("*Monthly budgets from `TOKEN_COP_PRINCIPAL_BUDGETS` (enforcement not provisioned).*")
         lines.append("| Principal | Budget | Spend | Overage |")
         lines.append("|-----------|--------|-------|---------|")
         for r in over_budget:
@@ -413,6 +460,8 @@ def _generate_json(
             "note": attribution.get("note", ""),
             "top_principals": attribution.get("top_principals", []),
             "over_budget": attribution.get("over_budget", []),
+            "budget_source": attribution.get("budget_source", "none"),
+            "default_budget_usd": attribution.get("default_budget_usd"),
             "team_movement": attribution.get("team_movement", []),
         },
     }

@@ -38,13 +38,10 @@ agents:
       execution_role: arn:aws:iam::<REPLACE-WITH-YOUR-AWS-ACCOUNT>:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-d154ece098
       source_bucket: bedrock-agentcore-codebuild-sources-<REPLACE-WITH-YOUR-AWS-ACCOUNT>-us-east-1
     memory:
-      mode: STM_ONLY
-      memory_id: token_cop_mem-hpzWit5smt
-      memory_arn: arn:aws:bedrock-agentcore:us-east-1:<REPLACE-WITH-YOUR-AWS-ACCOUNT>:memory/token_cop_mem-hpzWit5smt
-      memory_name: token_cop_mem
-      event_expiry_days: 30
-      first_invoke_memory_check_done: true
-      was_created_by_toolkit: true
+      # Disabled on purpose. Token Cop uses TokenCopMemory-oGHHvc2vSN (SEMANTIC +
+      # USER_PREFERENCE strategies) via memory/store.py; the STM-only memory the
+      # toolkit created here (token_cop_mem-hpzWit5smt) was never read by the code.
+      mode: NO_MEMORY
     identity:
       credential_providers: []
       workload: null

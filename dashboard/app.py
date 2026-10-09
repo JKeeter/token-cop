@@ -19,7 +19,7 @@ if not check_password():
 st.sidebar.title("Token Cop")
 st.sidebar.caption("More tokens is FINE -- they need to be SMART tokens.")
 
-page = st.sidebar.radio("Navigate", ["Overview", "Per-Model", "Recommendations"])
+page = st.sidebar.radio("Navigate", ["Overview", "Per-User & Per-Model", "Recommendations"])
 
 st.sidebar.divider()
 
@@ -81,7 +81,7 @@ if page == "Overview":
     from dashboard.views.overview import render_overview
     render_overview(data, audit)
 
-elif page == "Per-Model":
+elif page == "Per-User & Per-Model":
     from dashboard.views.per_user import render_per_user
     render_per_user(data)
 

@@ -1,11 +1,40 @@
 """AgentCore Memory helpers for storing and retrieving usage snapshots."""
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
 import boto3
 
-MEMORY_ID = os.environ.get("AGENTCORE_MEMORY_ID", "TokenCopMemory-oGHHvc2vSN")
+logger = logging.getLogger(__name__)
+
+# The memory Token Cop actually uses: USER_PREFERENCE + SEMANTIC strategies,
+# 365-day events. search_history's semantic retrieval depends on it.
+DEFAULT_MEMORY_ID = "TokenCopMemory-oGHHvc2vSN"
+# Injected by the AgentCore starter toolkit when .bedrock_agentcore.yaml has a
+# memory mode other than NO_MEMORY. That memory is STM-only with no strategies,
+# so it is deliberately NOT honoured here.
+TOOLKIT_MEMORY_ENV = "BEDROCK_AGENTCORE_MEMORY_ID"
+
+
+def resolve_memory_id() -> str:
+    """Pick the AgentCore Memory ID: AGENTCORE_MEMORY_ID override, else the default.
+
+    Warns if the toolkit injected a different memory so a config drift is
+    visible in the runtime logs instead of silently ignored.
+    """
+    memory_id = os.environ.get("AGENTCORE_MEMORY_ID") or DEFAULT_MEMORY_ID
+    toolkit_id = os.environ.get(TOOLKIT_MEMORY_ENV)
+    if toolkit_id and toolkit_id != memory_id:
+        logger.warning(
+            "Ignoring toolkit-provisioned AgentCore Memory %s (%s); Token Cop uses %s. "
+            "Set memory mode NO_MEMORY in .bedrock_agentcore.yaml to stop provisioning it.",
+            toolkit_id, TOOLKIT_MEMORY_ENV, memory_id,
+        )
+    return memory_id
+
+
+MEMORY_ID = resolve_memory_id()
 ACTOR_ID = "token-cop-user"
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 

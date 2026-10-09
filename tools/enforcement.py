@@ -49,6 +49,42 @@ def _config() -> tuple[str, float] | None:
     return table, default
 
 
+def load_budget_config() -> dict | None:
+    """Return the provisioned budget configuration, or None when enforcement is off.
+
+    Shape: ``{"table": str, "default_usd": float, "overrides": {principal: usd}}``.
+    Override keys are scrubbed with ``normalize_principal_arn`` so they join
+    directly against ``attribution_breakdown`` groups (which are scrubbed the
+    same way). This is the single budget source for the agent tools, the
+    weekly report, and anything else that needs "what is X's budget?".
+    """
+    cfg = _config()
+    if not cfg:
+        return None
+    table_name, default_budget = cfg
+
+    ddb = boto3.resource("dynamodb", region_name=AWS_REGION).Table(table_name)
+    overrides: dict[str, float] = {}
+    last_key = None
+    while True:
+        scan_kwargs = {
+            "FilterExpression": "sk = :sk",
+            "ExpressionAttributeValues": {":sk": "budget"},
+        }
+        if last_key:
+            scan_kwargs["ExclusiveStartKey"] = last_key
+        resp = ddb.scan(**scan_kwargs)
+        for item in resp.get("Items", []):
+            overrides[normalize_principal_arn(item["principal_arn"])] = float(
+                item.get("monthly_usd", default_budget)
+            )
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            break
+
+    return {"table": table_name, "default_usd": default_budget, "overrides": overrides}
+
+
 def _disabled_response() -> str:
     return json.dumps({
         "enabled": False,

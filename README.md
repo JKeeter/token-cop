@@ -15,9 +15,9 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore. An AI 
 - **Heavy file ingestion** - Auto-converts PDF, DOCX, PPTX, XLSX to markdown/CSV before Claude reads them (10-100x token savings)
 - **Smart model router** - Classifies tasks into reasoning/execution/polish tiers and recommends the most cost-effective model
 - **Token audit** - Scores usage across 6 dimensions (document ingestion, model mix, cache utilization, cost concentration, efficiency trend, savings opportunities) with A-F grades
-- **Invocation log analysis** - Deep analysis of Bedrock S3 invocation logs across 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, and context overhead detection (MCP tools, skills, plugins)
+- **Invocation log analysis** - Deep analysis of Bedrock S3 invocation logs across 8 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead detection (MCP tools, skills, plugins), and attribution coverage
 - **Context audit** - Inspects Claude Code environment for bloat: CLAUDE.md weight, MCP servers, skill/plugin tax, pruning recommendations
-- **Team dashboard** - Streamlit app with org-wide spend overview, per-model efficiency analysis, and optimization recommendations
+- **Team dashboard** - Streamlit app with org-wide spend overview, per-user (IAM principal) and per-model breakdowns, and optimization recommendations
 - **Weekly reports** - Markdown/JSON reports for Slack/email with efficiency grades and top recommendations
 - **Granular cost attribution** - Per-IAM-principal, per-team, and per-project Bedrock cost breakdowns via Cost Explorer (consumes the [April 17, 2026 AWS Bedrock cost attribution feature](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/iam-principal-cost-allocation.html)); one-shot setup with `scripts/enable_cur_attribution.py`
 - **Budget enforcement (opt-in)** - Hard-cap monthly Bedrock spend per IAM principal with ~1-5 min lag. CloudWatch Logs subscription meters every invocation into DynamoDB; an over-budget principal is blocked by attaching a managed deny policy until the next monthly reset. Setup: `scripts/setup_enforcement.py --enable`
@@ -123,7 +123,7 @@ pauses 60s. Full runbook (booth launch, capture refresh, slide re-export):
 | `search_history` | Semantic search over past usage snapshots |
 | `recommend_model` | Classify a task and recommend the best model tier |
 | `token_audit` | Score usage efficiency across 6 dimensions (A-F grade) |
-| `analyze_invocation_logs` | Deep analysis of Bedrock S3 invocation logs (7 dimensions) |
+| `analyze_invocation_logs` | Deep analysis of Bedrock S3 invocation logs (8 dimensions) |
 | `attribution_breakdown` | Group Bedrock cost by IAM principal / tag / usage type / account via Cost Explorer |
 | `context_audit` | Inspect Claude Code environment for context bloat (local only) |
 | `enforcement_status` | Report enforcement state — global, or per-principal current spend / budget / denied flag |
@@ -149,7 +149,7 @@ token-cop/
 │   ├── memory_tools.py     # save_snapshot + search_history
 │   ├── model_router.py     # Smart model tier recommendations
 │   ├── audit.py            # Token efficiency audit (6 dimensions)
-│   ├── invocation_logs.py  # Bedrock S3 invocation log analysis (7 dimensions)
+│   ├── invocation_logs.py  # Bedrock S3 invocation log analysis (8 dimensions)
 │   ├── attribution.py      # Cost Explorer attribution breakdown (principal / tag / usage type)
 │   ├── context_audit.py    # Claude Code environment bloat detection
 │   └── enforcement.py      # Budget enforcement: status, set budget, list denied (opt-in)
@@ -164,7 +164,7 @@ token-cop/
 │   ├── data.py             # Data aggregation layer
 │   └── views/
 │       ├── overview.py     # Team spend, grade, model mix charts
-│       ├── per_user.py     # Per-model efficiency analysis
+│       ├── per_user.py     # Per-user (IAM principal) & per-model breakdown
 │       └── recommendations.py  # Prioritized optimization advice
 ├── memory/
 │   └── store.py            # AgentCore Memory helpers
@@ -264,7 +264,7 @@ aws ssm put-parameter --name /token-cop/bedrock-log-bucket --type String --value
 aws ssm put-parameter --name /token-cop/bedrock-log-prefix --type String --value "custom/prefix"
 ```
 
-Analyzes 7 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, and context overhead (MCP tools, skills, plugins in system prompts). Automatically included in `token_audit` when S3 bucket is configured.
+Analyzes 8 dimensions: prompt bloat, model-task mismatch, caching opportunities, I/O ratio, system prompt weight, response waste, context overhead (MCP tools, skills, plugins in system prompts), and attribution coverage (share of calls carrying an IAM principal, inference profile, or request metadata). Automatically included in `token_audit` when S3 bucket is configured.
 
 ### Context Audit
 
@@ -289,7 +289,9 @@ python -m scripts.generate_report --period weekly --format markdown
 python -m scripts.generate_report --period monthly --format json
 ```
 
-The dashboard provides: org-wide spend overview, per-model efficiency analysis, and prioritized optimization recommendations. Set `TOKEN_COP_DASHBOARD_PASSWORD` env var for access control (default: `tokencop`).
+The dashboard provides: org-wide spend overview, a Per-User & Per-Model page (IAM-principal and model tabs), and prioritized optimization recommendations. Set `TOKEN_COP_DASHBOARD_PASSWORD` env var for access control (default: `tokencop`).
+
+The report's "Principals Over Budget" section uses the budgets in the enforcement table when enforcement is provisioned (see `docs/enforcement.md`), and falls back to the `TOKEN_COP_PRINCIPAL_BUDGETS` env var (JSON of principal ARN → monthly USD) otherwise.
 
 ## Cost Attribution
 

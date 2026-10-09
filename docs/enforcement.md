@@ -204,6 +204,12 @@ Use the agent tools (added to Token Cop automatically):
   budget for a specific principal.
 - `list_denied_principals()` — currently blocked principals.
 
+The weekly report (`python -m scripts.generate_report`) reads the same table via
+`tools.enforcement.load_budget_config()` for its "Principals Over Budget" section,
+so the report and the meter can never disagree about a budget. Without
+enforcement provisioned it falls back to the legacy `TOKEN_COP_PRINCIPAL_BUDGETS`
+env var (JSON of principal ARN → monthly USD; no default budget applies).
+
 Or query DynamoDB directly:
 
 ```bash
