@@ -56,6 +56,31 @@ If you re-record narration, re-check dwells against the new clip lengths.
 Debug override: set localStorage `tokencop.kiosk.playlist` to e.g.
 `[{"id":"replay-spend"},{"id":"arch-mcp","maxMs":20000}]` to pin a subset.
 
+## Presenter architecture page (no timer)
+
+For talking through the two architecture diagrams live — same components and
+step-synced highlight animations as the kiosk, but advanced by hand instead of
+the caption timer:
+
+```bash
+cd kiosk
+npm run arch:page    # → dist-arch/token-cop-architecture.html
+open dist-arch/token-cop-architecture.html
+```
+
+The output is a single self-contained HTML file (~200 KB, icons and JS
+inlined) that opens straight from Finder — no server, no npm, so it can be
+copied to a USB stick or another laptop as-is. The same page is also served
+at `/arch.html` by `npm run dev` / `npm run preview`.
+
+Controls: `←`/`→`, Space, Enter, or click = step; `1`/`2` jump between the
+skill-path and platform diagrams; Home/End; progress dots are clickable.
+Each diagram walks its kiosk caption steps, then holds on a "full picture"
+step with every node lit. Captions come from `src/kiosk/playlist.ts`, so
+kiosk caption edits flow through automatically (rebuild to refresh the file).
+Source: `kiosk/arch.html` + `src/arch/ArchPresenter.tsx`, built single-entry
+via `vite.arch.config.ts` and inlined by `scripts/bundle-arch-page.mjs`.
+
 ## Refreshing the recorded MCP captures
 
 The three terminal-replay scenes play **genuine** `token_cop` MCP exchanges

@@ -110,6 +110,10 @@ Presenter keys: ← / → jump scenes, Space pauses, Esc Esc exits; any touch
 pauses 60s. Full runbook (booth launch, capture refresh, slide re-export):
 [docs/kiosk-demo.md](docs/kiosk-demo.md).
 
+For talking through just the architecture diagrams with no timer,
+`cd kiosk && npm run arch:page` builds a single self-contained
+`dist-arch/token-cop-architecture.html` — manual stepping via ← / → / click.
+
 ## Tools
 
 | Tool | Description |

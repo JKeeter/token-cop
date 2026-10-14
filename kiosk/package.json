@@ -8,6 +8,7 @@
     "build": "npm run captures:check && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "arch:page": "tsc --noEmit && vite build --config vite.arch.config.ts && node scripts/bundle-arch-page.mjs",
     "captures:check": "node scripts/validate-captures.mjs"
   },
   "dependencies": {

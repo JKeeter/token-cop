@@ -153,6 +153,7 @@ Cross-platform LLM token usage tracker deployed on AWS Bedrock AgentCore.
 - Replay scenes play GENUINE recorded `token_cop` MCP exchanges from `kiosk/public/captures/*.json` — refresh via the live MCP tool before events (procedure + caption-number coupling in `docs/kiosk-demo.md`)
 - Slide PNGs rendered via LibreOffice headless (`kiosk/scripts/export-slides.sh`); PowerPoint AppleScript export is sandbox-blocked; PDF page numbers ≠ pptx slide numbers (32 hidden slides)
 - AWS icons: official 48px set in `kiosk/src/kiosk/overlay/aws/`; arch scenes sync node highlights to caption steps via `HOT_BY_STEP`
+- Presenter arch page (no timer, manual stepping): `cd kiosk && npm run arch:page` → self-contained `dist-arch/token-cop-architecture.html` (opens from file://); also served at `/arch.html` by dev/preview; source `src/arch/ArchPresenter.tsx`
 
 ## Git Filter
 - AWS account ID scrubbed from git via clean/smudge filter
